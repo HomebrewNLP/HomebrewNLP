@@ -13,48 +13,65 @@ class ReversibleRNNFunction(torch.autograd.Function):
         out = (fn_input - mean) / (std + 1e-6) * bn_weight + bn_bias
         out = mish(out)
         out0, out1 = torch.nn.functional.linear(torch.cat([out, sequence_input], 1), linear_param, None).chunk(2, 1)
-        return out0 * out1.tanh()
+        out1 = out1.sigmoid()
+        return out0 * out1, 1 - out1
 
     @staticmethod
     def _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1,
                       bn_bias1):
         inp = fn_input.chunk(2, 1)
+        print(inp[0].mean().item(), inp[1].mean().item(), "F")
+
         out = inp[0]
         params = [[bn_weight0, bn_bias0, linear_param0], [bn_weight1, bn_bias1, linear_param1]]
         outputs = [None, None]
         for i in range(2):
-            outputs[1 - i] = out = ReversibleRNNFunction._calc(out, sequence_input, *params[i]) + inp[1 - i]
+            tmp0, tmp1 = ReversibleRNNFunction._calc(out, sequence_input, *params[i])
+            outputs[1 - i] = out = tmp0 + inp[1 - i] * tmp1
         out = torch.cat(outputs, 1)
         return out
 
     @staticmethod
-    def forward(ctx, fn_input, sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1,
-                output_list, top, pos_enc):
-        ctx.save_for_backward(sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1,
-                              pos_enc)
+    def _backward_one(out, inp, sequence_input, bn_weight, bn_bias, linear_param):
+        tmp0, tmp1 = ReversibleRNNFunction._calc(inp, sequence_input, bn_weight, bn_bias, linear_param)
+        return (out - tmp0) / tmp1
+
+    @staticmethod
+    def forward(ctx, fn_input, _sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1,
+                bn_bias1, top, pos_enc):
+        output_list = []
         ctx.output_list = output_list
         ctx.top = top
-        sequence_input = torch.cat([sequence_input, pos_enc], -1)
+
+        sequence_input = torch.cat([_sequence_input, pos_enc], -1)
         if output_list:
             output_list.clear()
         with torch.no_grad():
+            print("FORWARD")
             out = ReversibleRNNFunction._forward_pass(fn_input, sequence_input, linear_param0, linear_param1,
                                                       bn_weight0, bn_bias0, bn_weight1, bn_bias1)
         with torch.enable_grad():
             out.requires_grad_(True)
-            output_list.append(out)
+            ctx.save_for_backward(_sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1,
+                                  bn_bias1,
+                                  pos_enc, out)
             return out
 
     @staticmethod
     def backward(ctx, grad_output):
-        sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1, pos_enc = ctx.saved_tensors
-        sequence_input = torch.cat([sequence_input, pos_enc], -1)
+        print("BACK")
+        sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1, pos_enc, out = ctx.saved_tensors
+        _sequence_input = torch.cat([sequence_input, pos_enc], -1)
+        _sequence_input.requires_grad_(sequence_input.requires_grad)
+        sequence_input = _sequence_input
         if not sequence_input.requires_grad:
-            return (None,) * 11
-        out0, out1 = ctx.output_list.pop(0).chunk(2, 1)
+            print("NO GRAD")
+            return (None,) * 10
+        out0, out1 = out.chunk(2, 1)
         with torch.no_grad():
-            inp0 = out0 - ReversibleRNNFunction._calc(out1, sequence_input, bn_weight1, bn_bias1, linear_param1)
-            inp1 = out1 - ReversibleRNNFunction._calc(inp0, sequence_input, bn_weight0, bn_bias0, linear_param0)
+            inp0 = ReversibleRNNFunction._backward_one(out0, out1, sequence_input, bn_weight1, bn_bias1, linear_param1)
+            inp1 = ReversibleRNNFunction._backward_one(out1, inp0, sequence_input, bn_weight0, bn_bias0, linear_param0)
+        print(inp0.mean().item(), inp1.mean().item(), "B")
         with torch.enable_grad():
             fn_input = torch.cat([inp0, inp1], 1)
             fn_input.detach_()
@@ -62,16 +79,18 @@ class ReversibleRNNFunction(torch.autograd.Function):
             args = (fn_input, sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1)
             grad_out = ReversibleRNNFunction._forward_pass(*args)
         grad_out.requires_grad_(True)
-        grad_out = torch.autograd.grad(grad_out, args, grad_output)
+        grad_out = list(torch.autograd.grad(grad_out, args, grad_output, allow_unused=True))
+        grad_out[1] = grad_out[1][:, :-2]
         fn_input.detach_()
         fn_input.requires_grad_(True)
         if not ctx.top:
             ctx.output_list.append(fn_input)
-        return grad_out + (None, None, None)
+        print("OUT")
+        return tuple(grad_out) + (None, None)
 
 
 class RevRNN(torch.nn.Module):
-    def __init__(self, input_features, hidden_features, return_sequences=False, delay=8):
+    def __init__(self, input_features, hidden_features, return_sequences=False, delay=8, depth=1):
         super(RevRNN, self).__init__()
         if hidden_features % 2:
             raise UserWarning(f"Ignoring uneven hidden feature and proceeding as if equal {hidden_features // 2 * 2}")
@@ -83,25 +102,38 @@ class RevRNN(torch.nn.Module):
         hidden_features = hidden_features // 2
         input_features += 2
 
-        self.linear_param0 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
-        self.linear_param1 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
-        self.bn_weight0 = torch.nn.Parameter(torch.ones(hidden_features))
-        self.bn_weight1 = torch.nn.Parameter(torch.ones(hidden_features))
-        self.bn_bias0 = torch.nn.Parameter(torch.zeros(hidden_features))
-        self.bn_bias1 = torch.nn.Parameter(torch.zeros(hidden_features))
         self.hidden_state = torch.nn.Parameter(torch.zeros(hidden_features * 2))
-
-        torch.nn.init.orthogonal_(self.linear_param0)
-        torch.nn.init.orthogonal_(self.linear_param1)
-        torch.nn.init.uniform_(self.bn_weight0, 0.998, 1.002)
-        torch.nn.init.uniform_(self.bn_weight1, 0.998, 1.002)
-        torch.nn.init.uniform_(self.bn_bias0, -0.002, 0.002)
-        torch.nn.init.uniform_(self.bn_bias1, -0.002, 0.002)
         torch.nn.init.normal_(self.hidden_state)
 
+        def set_param(self, idx):
+            linear_param0 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
+            linear_param1 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
+            bn_weight0 = torch.nn.Parameter(torch.ones(hidden_features))
+            bn_weight1 = torch.nn.Parameter(torch.ones(hidden_features))
+            bn_bias0 = torch.nn.Parameter(torch.zeros(hidden_features))
+            bn_bias1 = torch.nn.Parameter(torch.zeros(hidden_features))
+
+            torch.nn.init.orthogonal_(linear_param0)
+            torch.nn.init.orthogonal_(linear_param1)
+            torch.nn.init.uniform_(bn_weight0, 0.998, 1.002)
+            torch.nn.init.uniform_(bn_weight1, 0.998, 1.002)
+            torch.nn.init.uniform_(bn_bias0, -0.002, 0.002)
+            torch.nn.init.uniform_(bn_bias1, -0.002, 0.002)
+
+            setattr(self, f'linear_param0{idx}', linear_param0)
+            setattr(self, f'linear_param1{idx}', linear_param1)
+            setattr(self, f'bn_weight0{idx}', bn_weight0)
+            setattr(self, f'bn_weight1{idx}', bn_weight1)
+            setattr(self, f'bn_bias0{idx}', bn_bias0)
+            setattr(self, f'bn_bias1{idx}', bn_bias1)
+
+            return [linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1]
+
+        self.parameter_list = [set_param(self, i) for i in range(depth)]
+
     def _apply_forward(self, itm, out, output_list, function_output, top, pos_enc):
-        out = ReversibleRNNFunction.apply(out, itm, self.linear_param0, self.linear_param1, self.bn_weight0,
-                                          self.bn_bias0, self.bn_weight1, self.bn_weight1, output_list, top, pos_enc)
+        for param in self.parameter_list:
+            out = ReversibleRNNFunction.apply(out, itm, *param, output_list, top, pos_enc)
         if self.return_sequences:
             function_output.append(out)
         return out

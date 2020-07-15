@@ -11,6 +11,7 @@ BATCH_SIZE = 256
 SEQUENCE_LENGTH = 256
 DROPOUT_RATE = 0.15
 PRINTERVALL = 64
+DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 
 
@@ -26,7 +27,7 @@ def init(module: torch.nn.Module):
 
 
 mod = torch.nn.Sequential(torch.nn.Embedding(256, 256),
-                          module.RevRNN(256, HIDDEN, delay=DELAY, return_sequences=True),
+                          module.RevRNN(256, HIDDEN, delay=DELAY, return_sequences=True, depth=DEPTH),
                           module.Transpose(),
                           torch.nn.BatchNorm1d(HIDDEN),
                           torch.nn.Conv1d(HIDDEN, 256, 1)).to(DEVICE)

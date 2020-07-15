@@ -9,7 +9,7 @@ import module
 
 def test(batch_size=1):
     sequence_length = [64, 256, 1024, 2048]
-    features = [256]
+    features = [64]
     delays = [2]
 
     def _max_len(seq):
