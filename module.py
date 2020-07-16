@@ -35,14 +35,11 @@ class ReversibleRNNFunction(torch.autograd.Function):
     def _calc(fn_input, sequence_input, linear_param):
         # std, mean = torch.std_mean(fn_input, 0, keepdim=True)
         # out = (fn_input - mean) / (std + 1e-5)
-        out = fn_input
-        out0, out1, out2 = torch.nn.functional.linear(torch.cat([out, sequence_input], 1),
-                                                      linear_param,
-                                                      None).chunk(3, 1)
-        weight = torch.nn.functional.relu6(out1)
-        out0 = out0 * weight
-        print("C", out0.mean().item(), weight.mean().item())
-        return out0, weight + 1
+        out = fn_input - fn_input.mean(dim=0, keepdim=True)
+        out0, out1 = torch.nn.functional.linear(torch.cat([out, sequence_input], 1),
+                                                linear_param,
+                                                None).chunk(2, 1)
+        return torch.nn.functional.relu6(out0) * out1.tanh()
 
     @staticmethod
     def _forward_pass(fn_input, sequence_input, linear_param0, linear_param1):
@@ -51,19 +48,18 @@ class ReversibleRNNFunction(torch.autograd.Function):
         params = [linear_param0, linear_param1]
         outputs = [None, None]
         for i in range(2):
-            tmp0, tmp1 = ReversibleRNNFunction._calc(out, sequence_input, params[i])
-            outputs[1 - i] = out = (inp[1 - i] + tmp0) / tmp1
+            tmp0 = ReversibleRNNFunction._calc(out, sequence_input, params[i])
+            outputs[1 - i] = out = (inp[1 - i] + tmp0) / 2
         out = torch.cat(outputs, 1)
-        print("FP", out.mean().item())
         return out
 
     @staticmethod
     def _backward_one(out, inp, sequence_input, linear_param):
-        tmp0, tmp1 = ReversibleRNNFunction._calc(inp, sequence_input, linear_param)
-        return out * tmp1 - tmp0
+        tmp0 = ReversibleRNNFunction._calc(inp, sequence_input, linear_param)
+        return out * 2 - tmp0
 
     @staticmethod
-    def forward(ctx, fn_input, _sequence_input, linear_param0, linear_param1, output_listoutput_list, top, pos_enc):
+    def forward(ctx, fn_input, _sequence_input, linear_param0, linear_param1, output_list, top, pos_enc):
         ctx.save_for_backward(_sequence_input, linear_param0, linear_param1, pos_enc)
         ctx.output_list = output_list
         ctx.top = top
@@ -76,7 +72,6 @@ class ReversibleRNNFunction(torch.autograd.Function):
         with torch.enable_grad():
             out.requires_grad_(True)
             output_list.append(out)
-            print("F", out.mean().item())
             return out
 
     @staticmethod
@@ -95,7 +90,6 @@ class ReversibleRNNFunction(torch.autograd.Function):
             fn_input = torch.cat([inp0, inp1], 1)
             fn_input.detach_()
             fn_input.requires_grad_(True)
-            print("B", fn_input.mean().item())
             args = (fn_input, sequence_input, linear_param0, linear_param1)
             grad_out = ReversibleRNNFunction._forward_pass(*args)
         grad_out.requires_grad_(True)
@@ -127,8 +121,8 @@ class RevRNN(torch.nn.Module):
         torch.nn.init.normal_(self.hidden_state)
 
         def set_param(self, idx):
-            linear_param0 = torch.nn.Parameter(torch.zeros((3 * hidden_features, input_features + hidden_features)))
-            linear_param1 = torch.nn.Parameter(torch.zeros((3 * hidden_features, input_features + hidden_features)))
+            linear_param0 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
+            linear_param1 = torch.nn.Parameter(torch.zeros((2 * hidden_features, input_features + hidden_features)))
 
             torch.nn.init.orthogonal_(linear_param0)
             torch.nn.init.orthogonal_(linear_param0)

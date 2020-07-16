@@ -7,13 +7,13 @@ import module
 
 HIDDEN = 256
 DELAY = 4
-BATCH_SIZE = 64
-SEQUENCE_LENGTH = 256
+BATCH_SIZE = 512
+SEQUENCE_LENGTH = 32
 DROPOUT_RATE = 0.15
 PRINTERVALL = 64
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-
+#3.73
 
 def init(module: torch.nn.Module):
     if hasattr(module, "weight") and hasattr(module.weight, "data"):

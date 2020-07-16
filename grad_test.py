@@ -19,7 +19,6 @@ torch.autograd.gradcheck(module.ReversibleRNNFunction.apply, (inp,
                                                               out,
                                                               mod.linear_param00,
                                                               mod.linear_param10,
-                                                              [],
                                                               True,
                                                               pos),
                          atol=1e-4)
