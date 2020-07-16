@@ -5,9 +5,9 @@ import torch_optimizer
 
 import module
 
-HIDDEN = 1024
-DELAY = 8
-BATCH_SIZE = 256
+HIDDEN = 256
+DELAY = 4
+BATCH_SIZE = 64
 SEQUENCE_LENGTH = 256
 DROPOUT_RATE = 0.15
 PRINTERVALL = 64
@@ -27,10 +27,8 @@ def init(module: torch.nn.Module):
 
 
 mod = torch.nn.Sequential(torch.nn.Embedding(256, 256),
-                          module.RevRNN(256, HIDDEN, delay=DELAY, return_sequences=True, depth=DEPTH),
-                          module.Transpose(),
-                          torch.nn.BatchNorm1d(HIDDEN),
-                          torch.nn.Conv1d(HIDDEN, 256, 1)).to(DEVICE)
+                          module.RevRNN(256, HIDDEN, delay=DELAY, return_sequences=True, depth=DEPTH)).to(
+    DEVICE).double()
 mod.apply(init)
 opt = torch_optimizer.Yogi(mod.parameters(), lr=1e-3, weight_decay=1e-2)
 
@@ -53,8 +51,10 @@ while True:
     start_time = time.time()
     for i in range(1, 1 + length):
         tgt = tensor[batch_index].to(DEVICE)
-        src = tgt * tgt.bernoulli(p=1-DROPOUT_RATE)
+        src = tgt * tgt.bernoulli(p=1 - DROPOUT_RATE)
         out = mod(src.to(DEVICE))
+        out.transpose_(1, 2)
+        out = out[:, :256]
         lss = torch.nn.functional.cross_entropy(out, tgt)
         lss.backward()
         opt.step()
