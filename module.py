@@ -6,10 +6,10 @@ class ReversibleRNNFunction(torch.autograd.Function):
     @staticmethod
     def _single_calc(fn_input, sequence_input, linear_param):
         out = fn_input - fn_input.mean(dim=0, keepdim=True)
-        out0, out1, out2 = torch.nn.functional.linear(torch.cat([out, sequence_input], 1),
+        out0, out1 = torch.nn.functional.linear(torch.cat([out, sequence_input], 1),
                                                       linear_param,
-                                                      None).chunk(3, 1)
-        return torch.nn.functional.relu6(out0) * out1.tanh()
+                                                      None).chunk(2, 1)
+        return torch.sigmoid(out0) * out1.tanh()
 
     @staticmethod
     def _calc(fn_input, sequence_input, linear_param, depth):
@@ -97,10 +97,10 @@ class RevRNN(torch.nn.Module):
         torch.nn.init.normal_(self.hidden_state)
 
         self.linear_param0 = torch.nn.Parameter(torch.zeros((depth,
-                                                             3 * hidden_features,
+                                                             2 * hidden_features,
                                                              input_features + hidden_features)))
         self.linear_param1 = torch.nn.Parameter(torch.zeros((depth,
-                                                             3 * hidden_features,
+                                                             2 * hidden_features,
                                                              input_features + hidden_features)))
 
         for idx in range(depth):
