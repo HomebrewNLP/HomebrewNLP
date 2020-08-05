@@ -5,14 +5,15 @@ import torch_optimizer
 
 import module
 
-HIDDEN = 1536
+HIDDEN = 1024
 DELAY = 2
-BATCH_SIZE = 2
+BATCH_SIZE = 64
 SEQUENCE_LENGTH = 2048
 DROPOUT_RATE = 0.15
-PRINTERVALL = 32
+PRINTERVALL = 4
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
+DTYPE = torch.double
 #3.66 @ 256
 
 def init(module: torch.nn.Module):
@@ -29,11 +30,11 @@ def init(module: torch.nn.Module):
 mod = torch.nn.Sequential(torch.nn.Embedding(256, 256),
                           module.FixedRevRNN(256,
                                              HIDDEN,
+                                             256,
                                              delay=DELAY,
                                              return_sequences=True,
                                              depth=DEPTH,
-                                             input_count=SEQUENCE_LENGTH)).to(
-    DEVICE).double()
+                                             input_count=SEQUENCE_LENGTH)).to(DEVICE).to(DTYPE)
 mod.apply(init)
 
 tensor = torch.load('out.tensor')

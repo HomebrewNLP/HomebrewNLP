@@ -140,7 +140,7 @@ class AdaptiveRevRNN(torch.nn.Module):
 
 
 class FixedRevRNN(torch.nn.Module):
-    def __init__(self, input_features, hidden_features, return_sequences=False, delay=8, depth=1, input_count=0):
+    def __init__(self, input_features, hidden_features, out_features, return_sequences=False, delay=8, depth=1, input_count=0):
         super(FixedRevRNN, self).__init__()
         if input_count <= 0:
             raise UserWarning("No input count given")
@@ -164,6 +164,7 @@ class FixedRevRNN(torch.nn.Module):
         self.linear_param1 = torch.nn.Parameter(torch.zeros((depth,
                                                              input_features + hidden_features,
                                                              2 * hidden_features)))
+        self.out_linear = torch.nn.Parameter(torch.zeros((1, 2 * hidden_features, out_features)))
 
         for idx in range(depth):
             torch.nn.init.orthogonal_(self.linear_param0[idx])
@@ -197,8 +198,9 @@ class FixedRevRNN(torch.nn.Module):
         for idx in range(base_seq, seq):
             out = self._apply_forward(zeros, out, output_list, output, top, positional_encoding[:, idx])
             top = False
-        out = torch.cat(output[self.delay:], 0)[:, :self.input_features]
+        out = torch.cat(output[self.delay:], 0)
         out = out.view(batch, base_seq, -1)
+        out = torch.bmm(out, self.out_linear.expand(batch, -1, -1))
         return out
 
 
