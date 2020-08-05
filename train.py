@@ -5,12 +5,12 @@ import torch_optimizer
 
 import module
 
-HIDDEN = 512
-DELAY = 4
-BATCH_SIZE = 512
-SEQUENCE_LENGTH = 32
+HIDDEN = 1536
+DELAY = 2
+BATCH_SIZE = 2
+SEQUENCE_LENGTH = 2048
 DROPOUT_RATE = 0.15
-PRINTERVALL = 64
+PRINTERVALL = 32
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 #3.66 @ 256
@@ -27,21 +27,28 @@ def init(module: torch.nn.Module):
 
 
 mod = torch.nn.Sequential(torch.nn.Embedding(256, 256),
-                          module.RevRNN(256, HIDDEN, delay=DELAY, return_sequences=True, depth=DEPTH)).to(
+                          module.FixedRevRNN(256,
+                                             HIDDEN,
+                                             delay=DELAY,
+                                             return_sequences=True,
+                                             depth=DEPTH,
+                                             input_count=SEQUENCE_LENGTH)).to(
     DEVICE).double()
 mod.apply(init)
-opt = torch_optimizer.Yogi(mod.parameters(), lr=1e-3, weight_decay=1e-2)
 
 tensor = torch.load('out.tensor')
 tensor = tensor.long()
 
-batch_index = torch.arange(0, BATCH_SIZE).view(1, -1)
-item_index = torch.arange(0, SEQUENCE_LENGTH).view(-1, 1)
+batch_index = torch.arange(0, BATCH_SIZE).view(-1, 1)
+item_index = torch.arange(0, SEQUENCE_LENGTH).view(1, -1)
 batch_index = batch_index + item_index
 base_index = batch_index.clone()
 
 length = tensor.size(0) // SEQUENCE_LENGTH - 1
 len_len = len(str(length))
+
+mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
+opt = torch_optimizer.RAdam(mod.parameters(), lr=1e-3, weight_decay=1e-3)
 
 mean_loss = 0
 curr_loss = 0
@@ -54,7 +61,6 @@ while True:
         src = tgt * tgt.bernoulli(p=1 - DROPOUT_RATE)
         out = mod(src.to(DEVICE))
         out.transpose_(1, 2)
-        out = out[:, :256]
         lss = torch.nn.functional.cross_entropy(out, tgt)
         lss.backward()
         opt.step()

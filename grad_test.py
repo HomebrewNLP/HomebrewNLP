@@ -6,7 +6,7 @@ BATCH = 2
 IN_FEATURES = 2
 OUT_FEATURES = 2
 
-mod = module.RevRNN(IN_FEATURES, OUT_FEATURES)
+mod = module.AdaptiveRevRNN(IN_FEATURES, OUT_FEATURES)
 # fn_input, sequence_input, linear_param0, linear_param1, bn_weight0, bn_bias0, bn_weight1, bn_bias1,
 #                output_list, top, pos_enc
 mod = mod.double()

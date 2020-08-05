@@ -20,7 +20,7 @@ def test(batch_size=1):
     del_len = _max_len(delays)
 
     def _full(seq, feat, delay):
-        mod = module.RevRNN(256, feat, delay=delay)
+        mod = module.AdaptiveRevRNN(256, feat, delay=delay)
         start_time = time.time()
         inp = torch.randn((batch_size, seq, 256), requires_grad=True)
         out = mod(inp)
