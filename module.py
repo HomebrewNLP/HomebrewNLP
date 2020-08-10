@@ -4,10 +4,9 @@ import torch
 class ReversibleRNNFunction(torch.autograd.Function):
     @staticmethod
     def _single_calc(fn_input, sequence_input, linear_param):
-        out = fn_input - fn_input.mean(dim=0, keepdim=True)
         features = out.size(1)
-        out = torch.mm(out, linear_param[:features]) + torch.mm(sequence_input, linear_param[features:])
-        return torch.nn.functional.relu6(out[:, :features]) * out[:, features:].tanh()
+        out = torch.bmm(out, linear_param[:features]) + torch.bmm(sequence_input, linear_param[features:])
+        return torch.nn.functional.relu(out) / 2
 
     @staticmethod
     def _calc(fn_input, sequence_input, linear_param, depth):
@@ -15,13 +14,13 @@ class ReversibleRNNFunction(torch.autograd.Function):
         for idx in range(depth):
             out = ReversibleRNNFunction._single_calc(out, sequence_input, linear_param[idx])
         return out
-
+b
     @staticmethod
     def _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth):
         inp = fn_input.chunk(2, 1)
         outputs = [None, None]
-        outputs[1] = inp[1] + ReversibleRNNFunction._calc(inp[0], sequence_input, linear_param0, depth)
-        outputs[0] = inp[0] + ReversibleRNNFunction._calc(outputs[1], sequence_input, linear_param1, depth)
+        outputs[1] = (inp[1] + ReversibleRNNFunction._calc(inp[0], sequence_input, linear_param0, depth)) / 2
+        outputs[0] = (inp[0] + ReversibleRNNFunction._calc(outputs[1], sequence_input, linear_param1, depth)) / 2
         out = torch.cat(outputs, 1)
         return out
 
@@ -146,6 +145,8 @@ class FixedRevRNN(torch.nn.Module):
             raise UserWarning("No input count given")
         if hidden_features % 2:
             raise UserWarning(f"Ignoring uneven hidden feature and proceeding as if equal {hidden_features // 2 * 2}")
+        if input_features != hidden_features:
+            raise ValueError(f"Make sure the orthogonal input features have the same dimensionality as the hidden features")
 
         self.return_sequences = return_sequences
         self.delay = delay
@@ -159,28 +160,28 @@ class FixedRevRNN(torch.nn.Module):
         torch.nn.init.normal_(self.hidden_state)
 
         self.linear_param0 = torch.nn.Parameter(torch.zeros((depth,
-                                                             input_features + hidden_features,
-                                                             2 * hidden_features)))
+                                                             2 * hidden_features,
+                                                             hidden_features)))
         self.linear_param1 = torch.nn.Parameter(torch.zeros((depth,
                                                              input_features + hidden_features,
-                                                             2 * hidden_features)))
-        self.out_linear = torch.nn.Parameter(torch.zeros((1, 2 * hidden_features, out_features)))
+                                                             hidden_features)))
+        self.out_linear = torch.nn.Parameter(torch.randn((1, 2 * hidden_features, out_features)))
 
         for idx in range(depth):
-            torch.nn.init.orthogonal_(self.linear_param0[idx])
-            torch.nn.init.orthogonal_(self.linear_param1[idx])
+            torch.nn.init.orthogonal_(self.linear_param0[idx][:hidden_features])
+            torch.nn.init.orthogonal_(self.linear_param0[idx][hidden_features:])
+            torch.nn.init.orthogonal_(self.linear_param1[idx][:hidden_features])
+            torch.nn.init.orthogonal_(self.linear_param1[idx][hidden_features:])
 
         self.depth = depth
 
     def _apply_forward(self, itm, out, output_list, function_output, top, pos_enc):
-        out = ReversibleRNNFunction.apply(out, itm, self.linear_param0, self.linear_param1, output_list, top, pos_enc,
-                                          self.depth)
-        function_output.append(out)
         return out
 
     def forward(self, fn_input: torch.Tensor):
+        # B, S, F, F
         output_list = []
-        batch, _, _ = fn_input.size()
+        batch = fn_input.size(0)
         out = self.hidden_state.view(1, -1).expand(batch, -1)
         out.requires_grad_(fn_input.requires_grad)
         input_features = self.input_features
@@ -188,15 +189,19 @@ class FixedRevRNN(torch.nn.Module):
         top = True
         base_seq = seq = self.input_count
         seq += self.delay
-        zeros = torch.zeros((1, 1), device=fn_input.device, dtype=fn_input.dtype).expand(batch, input_features)
+        zeros = torch.eye(input_features, device=fn_input.device, dtype=fn_input.dtype).unsqueeze(0).expand(batch, -1, -1)
         factor = (seq + 1) / 2
         indices = torch.arange(1, seq + 1, dtype=fn_input.dtype, device=fn_input.device).view(1, -1, 1)
         positional_encoding = torch.cat([indices, (indices - factor) / factor], -1).expand(batch, -1, -1)
         for idx in range(base_seq):
-            out = self._apply_forward(fn_input[:, idx], out, output_list, output, top, positional_encoding[:, idx])
+            out = ReversibleRNNFunction.apply(out, fn_input[:, idx], self.linear_param0, self.linear_param1, 
+                                              output_list, top, positional_encoding[:, idx], self.depth)
+            output.append(out)
             top = False
         for idx in range(base_seq, seq):
-            out = self._apply_forward(zeros, out, output_list, output, top, positional_encoding[:, idx])
+            out = ReversibleRNNFunction.apply(out, zeros, self.linear_param0, self.linear_param1, 
+                                              output_list, top, positional_encoding[:, idx], self.depth)
+            output.append(out)
             top = False
         out = torch.cat(output[self.delay:], 0)
         out = out.view(batch, base_seq, -1)
