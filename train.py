@@ -5,16 +5,18 @@ import torch_optimizer
 
 import module
 
-HIDDEN = 1024
-DELAY = 2
-BATCH_SIZE = 64
-SEQUENCE_LENGTH = 2048
+HIDDEN = 64  # hidden units are squared
+DELAY = 1
+BATCH_SIZE = 1
+SEQUENCE_LENGTH = 16
 DROPOUT_RATE = 0.15
 PRINTERVALL = 4
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 DTYPE = torch.double
-#3.66 @ 256
+
+
+# 3.66 @ 256
 
 def init(module: torch.nn.Module):
     if hasattr(module, "weight") and hasattr(module.weight, "data"):
@@ -48,7 +50,7 @@ length = tensor.size(0) // SEQUENCE_LENGTH - 1
 len_len = len(str(length))
 
 mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
-opt = torch_optimizer.RAdam(mod.parameters(), lr=1e-3, weight_decay=1e-3)
+opt = torch.optim.AdamW(mod.parameters(), lr=1e-3, weight_decay=1e-3)
 
 mean_loss = 0
 curr_loss = 0
