@@ -27,8 +27,7 @@ def init(module: torch.nn.Module):
         torch.nn.init.constant_(module.bias.data, 0)
 
 
-mod = torch.nn.Sequential(torch.nn.Embedding(256, 256),
-                          module.FixedRevRNN(256,
+mod = torch.nn.Sequential(module.FixedRevRNN(256,
                                              HIDDEN,
                                              256,
                                              delay=DELAY,
