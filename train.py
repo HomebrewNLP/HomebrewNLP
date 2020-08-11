@@ -4,12 +4,12 @@ import torch
 
 import module
 
-HIDDEN = 64  # hidden units are squared
-DELAY = 1
+HIDDEN = 32  # hidden units are squared
+DELAY = 0
 BATCH_SIZE = 1
-SEQUENCE_LENGTH = 2048
+SEQUENCE_LENGTH = 512
 DROPOUT_RATE = 0.15
-PRINTERVALL = 4
+PRINTERVALL = 64
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 DTYPE = torch.double
@@ -57,10 +57,9 @@ mean_acc = 0
 torch.autograd.set_detect_anomaly(True)
 while True:
     start_time = time.time()
-    src = tensor[batch_index].to(DEVICE)
-    batch_index += BATCH_SIZE
     for i in range(1, 1 + length):
-        tgt = tensor[batch_index].to(DEVICE)
+        src = tensor[batch_index].to(DEVICE)
+        tgt = tensor[batch_index + DELAY + 1].to(DEVICE)
         out = mod(src.to(DEVICE))
         out.transpose_(1, 2)
         lss = torch.nn.functional.cross_entropy(out, tgt)
@@ -69,7 +68,7 @@ while True:
         opt.zero_grad()
         curr_loss += lss.item()
         src = tgt
-        batch_index += BATCH_SIZE
+        batch_index += SEQUENCE_LENGTH
         if i % PRINTERVALL == 0:
             mean_loss += curr_loss
             acc = (tgt == out.argmax(1)).sum().item() / tgt.numel() * 100
