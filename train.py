@@ -1,21 +1,27 @@
 import time
+import math
 
+import numpy as np
 import torch
 
 import module
 
-HIDDEN = 32  # hidden units are squared
+HIDDEN = 64  # hidden units are squared
 DELAY = 0
-BATCH_SIZE = 1
-SEQUENCE_LENGTH = 512
+BATCH_SIZE = 256
+SEQUENCE_LENGTH = 64
 DROPOUT_RATE = 0.15
-PRINTERVALL = 64
+PRINTERVALL = 128
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 DTYPE = torch.double
 
 
 # 3.66 @ 256
+
+def parameter_count(net):
+    parameters = filter(lambda p: p.requires_grad, net.parameters())
+    return sum(np.prod(p.size()) for p in parameters)
 
 def init(module: torch.nn.Module):
     if hasattr(module, "weight") and hasattr(module.weight, "data"):
@@ -36,6 +42,9 @@ mod = torch.nn.Sequential(module.FixedRevRNN(256,
                                              depth=DEPTH,
                                              input_count=SEQUENCE_LENGTH)).to(DEVICE).to(DTYPE)
 mod.apply(init)
+parameters = parameter_count(mod)
+base = int(math.log10(parameters) / 3)
+print(f'Parameters: {parameters/(1000**base):.1f}{" kMBT"[base]}')
 
 tensor = torch.load('out.tensor')
 tensor = tensor.long()
@@ -49,7 +58,8 @@ length = tensor.size(0) // SEQUENCE_LENGTH - 1
 len_len = len(str(length))
 
 mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
-opt = torch.optim.AdamW(mod.parameters(), lr=1e-3, weight_decay=1e-3)
+opt = torch.optim.AdamW(mod.parameters(), lr=0.0625, weight_decay=2e-4)
+sch = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=8, factor=0.4)  # 1024
 
 mean_loss = 0
 curr_loss = 0
@@ -74,6 +84,17 @@ while True:
             acc = (tgt == out.argmax(1)).sum().item() / tgt.numel() * 100
             mean_acc += acc
             print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss / PRINTERVALL:7.4f} - Mean: {mean_loss / i:7.4f}"
-                  f" | Acc: {acc:6.2f}% - Mean: {mean_acc / (i / PRINTERVALL):6.2f}%"
+                  f" | Acc: {acc:6.2f}% - Mean: {mean_acc / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
                   f" | Batch/s: {i / (time.time() - start_time):.3f}s")
             curr_loss = 0
+            sch.step(curr_loss)
+
+# seq 1024
+# no lr scheduler: [   8256/1262160] Loss:  5.5985 - Mean:  8.6705 | Acc:   2.93% - Mean:   2.00% | Batch/s: 1.863s
+# lr sched [  9728/631079] Loss:  5.5599 - Mean:  5.6732 | Acc:   2.64% - Mean:   3.19% - LR: 4.096000000000002e-05 | Batch/s: 1
+# seq 64
+# [   10496/10097290] Loss:  5.6123 - Mean:  6.0518 | Acc:   3.12% - Mean:   4.25% - LR: 0.000041 | Batch/s: 24.568s
+# hidden=64
+# [   11008/10097290] Loss:  6.3630 - Mean: 10.2268 | Acc:   0.00% - Mean:   4.60% - LR: 0.000016 | Batch/s: 15.515s
+# relu instead of orthogonal activation
+# [   10880/10097290] Loss:  6.2875 - Mean: 10.2672 | Acc:   6.25% - Mean:   4.80% - LR: 0.000016 | Batch/s: 15.859s
