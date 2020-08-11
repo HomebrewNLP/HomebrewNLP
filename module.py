@@ -10,7 +10,7 @@ class ReversibleRNNFunction(torch.autograd.Function):
         c = torch.bmm(sequence_input, linear_param[0:1, features:].expand(batch, -1, -1))
         a = torch.bmm(b, c)
         o = torch.bmm(a, activate.expand(batch, -1, -1))
-        print((o[0] @ o[0].t())[0, 0].item())
+        o, _ = o.qr()
         return o
 
     @staticmethod
