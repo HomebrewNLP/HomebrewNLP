@@ -1,14 +1,13 @@
 import time
 
 import torch
-import torch_optimizer
 
 import module
 
 HIDDEN = 64  # hidden units are squared
 DELAY = 1
 BATCH_SIZE = 1
-SEQUENCE_LENGTH = 16
+SEQUENCE_LENGTH = 2048
 DROPOUT_RATE = 0.15
 PRINTERVALL = 4
 DEPTH = 1
@@ -58,9 +57,10 @@ mean_acc = 0
 torch.autograd.set_detect_anomaly(True)
 while True:
     start_time = time.time()
+    src = tensor[batch_index].to(DEVICE)
+    batch_index += BATCH_SIZE
     for i in range(1, 1 + length):
         tgt = tensor[batch_index].to(DEVICE)
-        src = tgt * tgt.bernoulli(p=1 - DROPOUT_RATE)
         out = mod(src.to(DEVICE))
         out.transpose_(1, 2)
         lss = torch.nn.functional.cross_entropy(out, tgt)
@@ -68,7 +68,8 @@ while True:
         opt.step()
         opt.zero_grad()
         curr_loss += lss.item()
-        batch_index += SEQUENCE_LENGTH
+        src = tgt
+        batch_index += BATCH_SIZE
         if i % PRINTERVALL == 0:
             mean_loss += curr_loss
             acc = (tgt == out.argmax(1)).sum().item() / tgt.numel() * 100
