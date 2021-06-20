@@ -13,8 +13,7 @@ class ReversibleRNNFunction(torch.autograd.Function):
         o = torch.nn.functional.instance_norm(b * c)
         o = torch.nn.functional.relu(o)
         o = torch.bmm(o, linear_param[0:1, features * 2:].expand(batch, -1, -1))
-        o, _ = o.qr()
-        return o
+        return o.qr().Q
 
     @staticmethod
     def _calc(fn_input, sequence_input, linear_param, depth, activate):
@@ -114,24 +113,18 @@ class FixedRevRNN(torch.nn.Module):
         hidden_features = hidden_features // 2
         self.hidden_features = hidden_features
 
-        self.linear_param0 = torch.nn.Parameter(torch.zeros((depth,
-                                                             2 * hidden_features,
-                                                             hidden_features)))
-        self.linear_param1 = torch.nn.Parameter(torch.zeros((depth,
-                                                             2 * hidden_features,
-                                                             hidden_features)))
-        self.out_linear = torch.nn.Parameter(torch.randn((1, 2 * hidden_features ** 2, out_features)))
+        self.linear_param0 = torch.nn.Parameter(torch.zeros((depth, 3 * hidden_features, hidden_features)))
+        self.linear_param1 = torch.nn.Parameter(torch.zeros((depth, 3 * hidden_features, hidden_features)))
+        self.out_linear = torch.nn.Parameter(torch.randn((1, 3 * hidden_features ** 2, out_features)))
 
-        self.register_buffer('hidden_state', torch.zeros(1, 2 * hidden_features, hidden_features))
-        self.register_buffer('activation', torch.ones((hidden_features, hidden_features)).qr()[0].unsqueeze(0))
+        self.register_buffer('hidden_state', torch.zeros(1, 3 * hidden_features, hidden_features))
+        self.register_buffer('activation', torch.ones((hidden_features, hidden_features)).qr().Q.unsqueeze(0))
         self.register_buffer('embedding', torch.ones((input_cases, hidden_features, hidden_features)))
 
         for idx in range(depth):
-            for sub_idx in range(2):
-                torch.nn.init.orthogonal_(
-                    self.linear_param0[idx][sub_idx * hidden_features:(1 + sub_idx) * hidden_features])
-                torch.nn.init.orthogonal_(
-                    self.linear_param1[idx][sub_idx * hidden_features:(1 + sub_idx) * hidden_features])
+            for sub_idx in range(3):
+                torch.nn.init.orthogonal_(self.linear_param0[idx][sub_idx * hidden_features:(1 + sub_idx) * hidden_features])
+                torch.nn.init.orthogonal_(self.linear_param1[idx][sub_idx * hidden_features:(1 + sub_idx) * hidden_features])
 
         for idx in range(input_cases):
             torch.nn.init.orthogonal_(self.embedding[idx])
@@ -152,20 +145,14 @@ class FixedRevRNN(torch.nn.Module):
         base_seq = seq = self.input_count
         seq += self.delay
         zeros = torch.zeros(1, device=fn_input.device, dtype=fn_input.dtype).expand(batch)
-        l0 = torch.stack([torch.cat([self.linear_param0[depth][self.hidden_features:].qr()[0],
-                                     self.linear_param0[depth][:self.hidden_features].qr()[0]], 0)
-                          for depth in range(self.depth)], 0)
-        l1 = torch.stack([torch.cat([self.linear_param1[depth][self.hidden_features:].qr()[0],
-                                     self.linear_param1[depth][:self.hidden_features].qr()[0]], 0)
-                          for depth in range(self.depth)], 0)
+        l0 = torch.stack([torch.cat([slice.qr().Q for slice self.linear_param0[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
+        l0 = torch.stack([torch.cat([slice.qr().Q for slice self.linear_param1[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
         for idx in range(base_seq):
-            out = ReversibleRNNFunction.apply(out, fn_input[:, idx], l0, l1, output_list, top, self.depth,
-                                              self.activation, self.embedding)
+            out = ReversibleRNNFunction.apply(out, fn_input[:, idx], l0, l1, output_list, top, self.depth, self.activation, self.embedding)
             output.append(out)
             top = False
         for idx in range(base_seq, seq):
-            out = ReversibleRNNFunction.apply(out, zeros, l0, l1, output_list, top, self.depth, self.activation,
-                                              self.embedding)
+            out = ReversibleRNNFunction.apply(out, zeros, l0, l1, output_list, top, self.depth, self.activation, self.embedding)
             output.append(out)
             top = False
         out = torch.stack(output[self.delay:], 1).view(batch, base_seq, -1)
