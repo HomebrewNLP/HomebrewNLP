@@ -5,7 +5,7 @@ def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
     return torch.nn.functional.relu(torch.nn.functional.instance_norm(fn_input))
 
 
-def _single_calc(self, fn_input, sequence_input, linear_param):
+def _single_calc(fn_input, sequence_input, linear_param):
     features = fn_input.size(2)
     batch = fn_input.size(0)
     fn_input = _activate_norm(fn_input)
@@ -16,14 +16,14 @@ def _single_calc(self, fn_input, sequence_input, linear_param):
     return o.qr().Q
 
 
-def _calc(self, fn_input, sequence_input, linear_param, depth):
+def _calc(fn_input, sequence_input, linear_param, depth):
     out = fn_input
     for idx in range(depth):
         out = _single_calc(out, sequence_input, linear_param[idx:idx + 1])
     return out
 
 
-def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, depth):
+def _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth):
     inp = fn_input.chunk(2, 1)
     outputs = [None, None]
     outputs[1] = torch.bmm(inp[1], _calc(inp[0], sequence_input, linear_param0, depth))
@@ -32,7 +32,7 @@ def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, 
     return out
 
 
-def _backward_one(self, out, inp, sequence_input, linear_param, depth):
+def _backward_one(out, inp, sequence_input, linear_param, depth):
     return torch.bmm(out, _calc(inp, sequence_input, linear_param, depth).transpose(1, 2))
 
 
