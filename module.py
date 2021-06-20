@@ -1,44 +1,45 @@
 import torch
 
 
-activate = torch.nn.functional.relu
+def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
+    return torch.nn.functional.relu(torch.nn.functional.instance_norm(fn_input))
 
 
-def _single_calc(self, fn_input, sequence_input, linear_param, activate):
+def _single_calc(self, fn_input, sequence_input, linear_param):
     features = fn_input.size(2)
     batch = fn_input.size(0)
-    fn_input = activate(torch.nn.functional.instance_norm(fn_input))
+    fn_input = _activate_norm(fn_input)
     b = torch.bmm(fn_input, linear_param[0:1, :features].expand(batch, -1, -1))
     c = torch.bmm(sequence_input, linear_param[0:1, features:features * 2].expand(batch, -1, -1))
-    o = activate(torch.nn.functional.instance_norm(b * c))
+    o = _activate_norm((b * c))
     o = torch.bmm(o, linear_param[0:1, features * 2:].expand(batch, -1, -1))
     return o.qr().Q
 
 
-def _calc(self, fn_input, sequence_input, linear_param, depth, activate):
+def _calc(self, fn_input, sequence_input, linear_param, depth):
     out = fn_input
     for idx in range(depth):
-        out = _single_calc(out, sequence_input, linear_param[idx:idx + 1], activate)
+        out = _single_calc(out, sequence_input, linear_param[idx:idx + 1])
     return out
 
 
-def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, depth, activate):
+def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, depth):
     inp = fn_input.chunk(2, 1)
     outputs = [None, None]
-    outputs[1] = torch.bmm(inp[1], _calc(inp[0], sequence_input, linear_param0, depth, activate))
-    outputs[0] = torch.bmm(inp[0], _calc(outputs[1], sequence_input, linear_param1, depth, activate))
+    outputs[1] = torch.bmm(inp[1], _calc(inp[0], sequence_input, linear_param0, depth))
+    outputs[0] = torch.bmm(inp[0], _calc(outputs[1], sequence_input, linear_param1, depth))
     out = torch.cat(outputs, 1)
     return out
 
 
-def _backward_one(self, out, inp, sequence_input, linear_param, depth, activate):
-    return torch.bmm(out, _calc(inp, sequence_input, linear_param, depth, activate).transpose(1, 2))
+def _backward_one(self, out, inp, sequence_input, linear_param, depth):
+    return torch.bmm(out, _calc(inp, sequence_input, linear_param, depth).transpose(1, 2))
 
 
 class ReversibleRNNFunction(torch.autograd.Function): 
     @staticmethod
-    def forward(ctx, fn_input, sequence_input, linear_param0, linear_param1, output_list, top, depth, activate, embedding):
-        ctx.save_for_backward(sequence_input, linear_param0, linear_param1, activate, embedding)
+    def forward(ctx, fn_input, sequence_input, linear_param0, linear_param1, output_list, top, depth, embedding):
+        ctx.save_for_backward(sequence_input, linear_param0, linear_param1, embedding)
         sequence_input = embedding[sequence_input]
         ctx.output_list = output_list
         ctx.top = top
@@ -47,7 +48,7 @@ class ReversibleRNNFunction(torch.autograd.Function):
         if output_list:
             output_list.clear()
         with torch.no_grad():
-            out = _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth, activate)
+            out = _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth)
         with torch.enable_grad():
             out.requires_grad_(True)
             output_list.append(out)
@@ -55,7 +56,7 @@ class ReversibleRNNFunction(torch.autograd.Function):
         
     @staticmethod
     def backward(ctx, grad_output):
-        sequence_input, linear_param0, linear_param1, activate, embedding = ctx.saved_tensors
+        sequence_input, linear_param0, linear_param1, embedding = ctx.saved_tensors
         sequence_input = embedding[sequence_input]
         depth = ctx.depth
         if not sequence_input.requires_grad:
@@ -65,16 +66,16 @@ class ReversibleRNNFunction(torch.autograd.Function):
         features = out.size(1) // 2
         out0, out1 = out[:, :features], out[:, features:]
         with torch.no_grad():
-            inp0 = _backward_one(out0, out1, sequence_input, linear_param1, depth, activate)
-            inp1 = _backward_one(out1, inp0, sequence_input, linear_param0, depth, activate)
+            inp0 = _backward_one(out0, out1, sequence_input, linear_param1, depth)
+            inp1 = _backward_one(out1, inp0, sequence_input, linear_param0, depth)
         with torch.enable_grad():
             fn_input = torch.cat([inp0, inp1], 1)
             fn_input.detach_()
             fn_input.requires_grad_(True)
-            args = (fn_input, sequence_input, linear_param0, linear_param1, depth, activate)
+            args = (fn_input, sequence_input, linear_param0, linear_param1, depth)
             grad_out = _forward_pass(*args)
         grad_out.requires_grad_(True)
-        grad_out = torch.autograd.grad(grad_out, (fn_input, sequence_input, linear_param0, linear_param1, activate), grad_output, allow_unused=True)
+        grad_out = torch.autograd.grad(grad_out, (fn_input, sequence_input, linear_param0, linear_param1), grad_output, allow_unused=True)
         fn_input.detach_()
         fn_input.requires_grad_(True)
         if not ctx.top:
@@ -112,7 +113,6 @@ class FixedRevRNN(torch.nn.Module):
         self.out_linear = torch.nn.Parameter(torch.randn((1, 3 * hidden_features ** 2, out_features)))
 
         self.register_buffer('hidden_state', torch.zeros(1, 3 * hidden_features, hidden_features))
-        self.register_buffer('activation', torch.ones((hidden_features, hidden_features)).qr().Q.unsqueeze(0))
         self.register_buffer('embedding', torch.ones((input_cases, hidden_features, hidden_features)))
 
         for idx in range(depth):
@@ -143,11 +143,11 @@ class FixedRevRNN(torch.nn.Module):
         l1 = torch.stack([torch.cat([slice.qr().Q for slice in self.linear_param1[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
         fn = ReversibleRNNFunction().apply
         for idx in range(base_seq):
-            out = fn(out, fn_input[:, idx], l0, l1, output_list, top, self.depth, self.activation, self.embedding)
+            out = fn(out, fn_input[:, idx], l0, l1, output_list, top, self.depth, self.embedding)
             output.append(out)
             top = False
         for idx in range(base_seq, seq):
-            out = fn(out, zeros, l0, l1, output_list, top, self.depth, self.activation, self.embedding)
+            out = fn(out, zeros, l0, l1, output_list, top, self.depth, self.embedding)
             output.append(out)
             top = False
         out = torch.stack(output[self.delay:], 1).view(batch, base_seq, -1)
