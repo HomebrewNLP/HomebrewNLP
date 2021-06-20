@@ -1,36 +1,43 @@
 import torch
 
+
 activate = torch.nn.functional.relu
 
+
+def _single_calc(self, fn_input, sequence_input, linear_param, activate):
+    features = fn_input.size(2)
+    batch = fn_input.size(0)
+    fn_input = activate(torch.nn.functional.instance_norm(fn_input))
+    b = torch.bmm(fn_input, linear_param[0:1, :features].expand(batch, -1, -1))
+    c = torch.bmm(sequence_input, linear_param[0:1, features:features * 2].expand(batch, -1, -1))
+    o = activate(torch.nn.functional.instance_norm(b * c))
+    o = torch.bmm(o, linear_param[0:1, features * 2:].expand(batch, -1, -1))
+    return o.qr().Q
+
+
+def _calc(self, fn_input, sequence_input, linear_param, depth, activate):
+    out = fn_input
+    for idx in range(depth):
+        out = _single_calc(out, sequence_input, linear_param[idx:idx + 1], activate)
+    return out
+
+
+def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, depth, activate):
+    inp = fn_input.chunk(2, 1)
+    outputs = [None, None]
+    outputs[1] = torch.bmm(inp[1], _calc(inp[0], sequence_input, linear_param0, depth, activate))
+    outputs[0] = torch.bmm(inp[0], _calc(outputs[1], sequence_input, linear_param1, depth, activate))
+    out = torch.cat(outputs, 1)
+    return out
+
+
+def _backward_one(self, out, inp, sequence_input, linear_param, depth, activate):
+    return torch.bmm(out, _calc(inp, sequence_input, linear_param, depth, activate).transpose(1, 2))
+
+
 class ReversibleRNNFunction(torch.autograd.Function): 
-    def _single_calc(self, fn_input, sequence_input, linear_param, activate):
-        features = fn_input.size(2)
-        batch = fn_input.size(0)
-        fn_input = activate(torch.nn.functional.instance_norm(fn_input))
-        b = torch.bmm(fn_input, linear_param[0:1, :features].expand(batch, -1, -1))
-        c = torch.bmm(sequence_input, linear_param[0:1, features:features * 2].expand(batch, -1, -1))
-        o = activate(torch.nn.functional.instance_norm(b * c))
-        o = torch.bmm(o, linear_param[0:1, features * 2:].expand(batch, -1, -1))
-        return o.qr().Q
-
-    def _calc(self, fn_input, sequence_input, linear_param, depth, activate):
-        out = fn_input
-        for idx in range(depth):
-            out = self._single_calc(out, sequence_input, linear_param[idx:idx + 1], activate)
-        return out
-
-    def _forward_pass(self, fn_input, sequence_input, linear_param0, linear_param1, depth, activate):
-        inp = fn_input.chunk(2, 1)
-        outputs = [None, None]
-        outputs[1] = torch.bmm(inp[1], self._calc(inp[0], sequence_input, linear_param0, depth, activate))
-        outputs[0] = torch.bmm(inp[0], self._calc(outputs[1], sequence_input, linear_param1, depth, activate))
-        out = torch.cat(outputs, 1)
-        return out
-
-    def _backward_one(self, out, inp, sequence_input, linear_param, depth, activate):
-        return torch.bmm(out, self._calc(inp, sequence_input, linear_param, depth, activate).transpose(1, 2))
-
-    def forward(self, ctx, fn_input, sequence_input, linear_param0, linear_param1, output_list, top, depth, activate, embedding):
+    @staticmethod
+    def forward(ctx, fn_input, sequence_input, linear_param0, linear_param1, output_list, top, depth, activate, embedding):
         ctx.save_for_backward(sequence_input, linear_param0, linear_param1, activate, embedding)
         sequence_input = embedding[sequence_input]
         ctx.output_list = output_list
@@ -40,13 +47,14 @@ class ReversibleRNNFunction(torch.autograd.Function):
         if output_list:
             output_list.clear()
         with torch.no_grad():
-            out = self._forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth, activate)
+            out = _forward_pass(fn_input, sequence_input, linear_param0, linear_param1, depth, activate)
         with torch.enable_grad():
             out.requires_grad_(True)
             output_list.append(out)
             return out
-
-    def backward(self, ctx, grad_output):
+        
+    @staticmethod
+    def backward(ctx, grad_output):
         sequence_input, linear_param0, linear_param1, activate, embedding = ctx.saved_tensors
         sequence_input = embedding[sequence_input]
         depth = ctx.depth
@@ -57,14 +65,14 @@ class ReversibleRNNFunction(torch.autograd.Function):
         features = out.size(1) // 2
         out0, out1 = out[:, :features], out[:, features:]
         with torch.no_grad():
-            inp0 = self._backward_one(out0, out1, sequence_input, linear_param1, depth, activate)
-            inp1 = self._backward_one(out1, inp0, sequence_input, linear_param0, depth, activate)
+            inp0 = _backward_one(out0, out1, sequence_input, linear_param1, depth, activate)
+            inp1 = _backward_one(out1, inp0, sequence_input, linear_param0, depth, activate)
         with torch.enable_grad():
             fn_input = torch.cat([inp0, inp1], 1)
             fn_input.detach_()
             fn_input.requires_grad_(True)
             args = (fn_input, sequence_input, linear_param0, linear_param1, depth, activate)
-            grad_out = self._forward_pass(*args)
+            grad_out = _forward_pass(*args)
         grad_out.requires_grad_(True)
         grad_out = torch.autograd.grad(grad_out, (fn_input, sequence_input, linear_param0, linear_param1, activate), grad_output, allow_unused=True)
         fn_input.detach_()
