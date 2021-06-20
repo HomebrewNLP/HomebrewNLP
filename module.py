@@ -110,7 +110,7 @@ class FixedRevRNN(torch.nn.Module):
 
         self.linear_param0 = torch.nn.Parameter(torch.zeros((depth, 3 * hidden_features, hidden_features)))
         self.linear_param1 = torch.nn.Parameter(torch.zeros((depth, 3 * hidden_features, hidden_features)))
-        self.out_linear = torch.nn.Parameter(torch.randn((1, 3 * hidden_features ** 2, out_features)))
+        self.out_linear = torch.nn.Parameter(torch.randn((1, 2 * hidden_features ** 2, out_features)))
 
         self.register_buffer('hidden_state', torch.zeros(1, 2 * hidden_features, hidden_features))
         self.register_buffer('embedding', torch.ones((input_cases, hidden_features, hidden_features)))
