@@ -1,27 +1,45 @@
-import time
 import math
+import time
 
 import numpy as np
 import torch
 
 import module
 
-HIDDEN = 64  # hidden units are squared
+torch._C._jit_set_profiling_mode(False)
+torch._C._jit_set_profiling_executor(False)
+torch._C._jit_override_can_fuse_on_cpu(True)
+torch._C._jit_override_can_fuse_on_gpu(True)
+torch._C._jit_set_nvfuser_enabled(True)
+torch._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
+torch._C._set_graph_executor_optimize(True)
+torch._C._set_backcompat_broadcast_warn(False)
+torch._C._set_backcompat_keepdim_warn(False)
+torch._C._set_cudnn_enabled(True)
+torch._C._set_mkldnn_enabled(True)
+torch._C._set_mkldnn_enabled(True)
+torch._C._set_cudnn_benchmark(True)
+torch._C._set_cudnn_deterministic(False)
+torch._C._set_cudnn_allow_tf32(True)
+torch._C._set_cublas_allow_tf32(True)
+torch._C._jit_set_inline_everything_mode(True)
+torch._C._jit_set_texpr_fuser_enabled(True)
+
+HIDDEN = 64 # hidden units are squared
 DELAY = 0
-BATCH_SIZE = 256
-SEQUENCE_LENGTH = 64
-DROPOUT_RATE = 0.15
-PRINTERVALL = 128
+BATCH_SIZE = 2
+SEQUENCE_LENGTH = 2 ** 14
+PRINTERVALL = 1
 DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-DTYPE = torch.double
+DTYPE = torch.float  # torch.double
 
 
 # 3.66 @ 256
 
 def parameter_count(net):
-    parameters = filter(lambda p: p.requires_grad, net.parameters())
-    return sum(np.prod(p.size()) for p in parameters)
+    return sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, net.parameters()))
+
 
 def init(module: torch.nn.Module):
     if hasattr(module, "weight") and hasattr(module.weight, "data"):
@@ -44,7 +62,7 @@ mod = torch.nn.Sequential(module.FixedRevRNN(256,
 mod.apply(init)
 parameters = parameter_count(mod)
 base = int(math.log10(parameters) / 3)
-print(f'Parameters: {parameters/(1000**base):.1f}{" kMBT"[base]}')
+print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
 
 tensor = torch.load('out.tensor')
 tensor = tensor.long()
@@ -58,8 +76,8 @@ length = tensor.size(0) // SEQUENCE_LENGTH - 1
 len_len = len(str(length))
 
 mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
-opt = torch.optim.AdamW(mod.parameters(), lr=0.0625, weight_decay=2e-4)
-sch = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=8, factor=0.4)  # 1024
+opt = torch.optim.AdamW(mod.parameters(), lr=0.0625 * 0.5, weight_decay=2e-4)
+sch = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=256, factor=0.4)  # 1024
 
 mean_loss = 0
 curr_loss = 0
@@ -76,18 +94,18 @@ while True:
         lss.backward()
         opt.step()
         opt.zero_grad()
-        curr_loss += lss.item()
-        src = tgt
-        batch_index += SEQUENCE_LENGTH
-        if i % PRINTERVALL == 0:
-            mean_loss += curr_loss
-            acc = (tgt == out.argmax(1)).sum().item() / tgt.numel() * 100
-            mean_acc += acc
-            print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss / PRINTERVALL:7.4f} - Mean: {mean_loss / i:7.4f}"
-                  f" | Acc: {acc:6.2f}% - Mean: {mean_acc / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
-                  f" | Batch/s: {i / (time.time() - start_time):.3f}s")
-            curr_loss = 0
-            sch.step(curr_loss)
+        with torch.no_grad():
+            curr_loss += lss.detach()
+            batch_index += SEQUENCE_LENGTH
+            if i % PRINTERVALL == 0:
+                mean_loss += curr_loss
+                acc = (tgt == out.argmax(1)).sum().detach() / tgt.numel() * 100
+                mean_acc += acc
+                print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / PRINTERVALL:7.4f} - Mean: {mean_loss.item() / i:7.4f}"
+                      f" | Acc: {acc.item():6.2f}% - Mean: {mean_acc.item() / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
+                      f" | Batch/s: {i / (time.time() - start_time):.3f}s")
+                curr_loss = 0
+                sch.step(curr_loss)
 
 # seq 1024
 # no lr scheduler: [   8256/1262160] Loss:  5.5985 - Mean:  8.6705 | Acc:   2.93% - Mean:   2.00% | Batch/s: 1.863s
