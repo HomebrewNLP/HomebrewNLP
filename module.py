@@ -132,7 +132,7 @@ class FixedRevRNN(torch.nn.Module):
         seq += self.delay
         zeros = torch.zeros(1, device=fn_input.device, dtype=fn_input.dtype).expand(batch)
         l0 = torch.stack([torch.cat([slice.qr().Q for slice in self.linear_param0[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
-        l0 = torch.stack([torch.cat([slice.qr().Q for slice in self.linear_param1[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
+        l1 = torch.stack([torch.cat([slice.qr().Q for slice in self.linear_param1[depth].chunk(3, 0)], 0) for depth in range(self.depth)], 0)
         fn = ReversibleRNNFunction().apply
         for idx in range(base_seq):
             out = fn(out, fn_input[:, idx], l0, l1, output_list, top, self.depth, self.activation, self.embedding)
