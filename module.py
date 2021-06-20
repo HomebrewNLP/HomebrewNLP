@@ -6,10 +6,13 @@ class ReversibleRNNFunction(torch.autograd.Function):
     def _single_calc(fn_input, sequence_input, linear_param, activate):
         features = fn_input.size(2)
         batch = fn_input.size(0)
+        fn_input = torch.nn.functional.instance_norm(fn_input)
+        fn_input = torch.nn.functional.relu(fn_input)
         b = torch.bmm(fn_input, linear_param[0:1, :features].expand(batch, -1, -1))
-        c = torch.bmm(sequence_input, linear_param[0:1, features:].expand(batch, -1, -1))
-        a = torch.bmm(b, c)
-        o = a.clamp(min=0) # torch.bmm(a, activate.expand(batch, -1, -1))
+        c = torch.bmm(sequence_input, linear_param[0:1, features:features * 2].expand(batch, -1, -1))
+        o = torch.nn.functional.instance_norm(b * c)
+        o = torch.nn.functional.relu(o)
+        o = torch.bmm(o, linear_param[0:1, features * 2:].expand(batch, -1, -1))
         o, _ = o.qr()
         return o
 
