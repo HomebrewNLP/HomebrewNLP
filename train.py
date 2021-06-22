@@ -52,13 +52,13 @@ def init(module: torch.nn.Module):
         torch.nn.init.constant_(module.bias.data, 0)
 
 
-mod = torch.nn.Sequential(module.FixedRevRNN(256,
-                                             HIDDEN,
-                                             256,
-                                             delay=DELAY,
-                                             return_sequences=True,
-                                             depth=DEPTH,
-                                             input_count=SEQUENCE_LENGTH)).to(DEVICE).to(DTYPE)
+mod = module.FixedRevRNN(256,
+                         HIDDEN,
+                         256,
+                         delay=DELAY,
+                         return_sequences=True,
+                         depth=DEPTH,
+                         input_count=SEQUENCE_LENGTH).to(DEVICE).to(DTYPE)
 mod.apply(init)
 parameters = parameter_count(mod)
 base = int(math.log10(parameters) / 3)
