@@ -25,7 +25,7 @@ torch._C._set_cublas_allow_tf32(True)
 torch._C._jit_set_inline_everything_mode(True)
 torch._C._jit_set_texpr_fuser_enabled(True)
 
-HIDDEN = 64 # hidden units are squared
+HIDDEN = 64  # hidden units are squared
 DELAY = 0
 BATCH_SIZE = 2
 SEQUENCE_LENGTH = 2 ** 14
@@ -57,7 +57,6 @@ mod = module.FixedRevRNN(256,
                          256,
                          delay=DELAY,
                          return_sequences=True,
-                         depth=DEPTH,
                          input_count=SEQUENCE_LENGTH).to(DEVICE).to(DTYPE)
 mod.apply(init)
 parameters = parameter_count(mod)
@@ -101,9 +100,10 @@ while True:
                 mean_loss += curr_loss
                 acc = (tgt == out.argmax(1)).sum().detach() / tgt.numel() * 100
                 mean_acc += acc
-                print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / PRINTERVALL:7.4f} - Mean: {mean_loss.item() / i:7.4f}"
-                      f" | Acc: {acc.item():6.2f}% - Mean: {mean_acc.item() / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
-                      f" | Batch/s: {i / (time.time() - start_time):.3f}s")
+                print(
+                    f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / PRINTERVALL:7.4f} - Mean: {mean_loss.item() / i:7.4f}"
+                    f" | Acc: {acc.item():6.2f}% - Mean: {mean_acc.item() / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
+                    f" | Batch/s: {i / (time.time() - start_time):.3f}s")
                 curr_loss = 0
                 sch.step(curr_loss)
 
