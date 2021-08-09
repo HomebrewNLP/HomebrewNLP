@@ -6,11 +6,6 @@ import torch
 
 import module
 
-torch._C._jit_set_profiling_mode(False)
-torch._C._jit_set_profiling_executor(False)
-torch._C._jit_override_can_fuse_on_cpu(True)
-torch._C._jit_override_can_fuse_on_gpu(True)
-torch._C._jit_set_nvfuser_enabled(True)
 torch._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
 torch._C._set_graph_executor_optimize(True)
 torch._C._set_backcompat_broadcast_warn(False)
@@ -23,7 +18,14 @@ torch._C._set_cudnn_deterministic(False)
 torch._C._set_cudnn_allow_tf32(True)
 torch._C._set_cublas_allow_tf32(True)
 torch._C._jit_set_inline_everything_mode(True)
+
+torch._C._jit_set_profiling_executor(True)
+torch._C._jit_set_profiling_mode(True)
+torch._C._jit_override_can_fuse_on_cpu(False)
+torch._C._jit_override_can_fuse_on_gpu(True)
 torch._C._jit_set_texpr_fuser_enabled(True)
+torch._C._jit_set_nvfuser_enabled(False)
+
 
 HIDDEN = 16  # hidden units are squared
 DELAY = 0
