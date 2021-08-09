@@ -25,12 +25,11 @@ torch._C._set_cublas_allow_tf32(True)
 torch._C._jit_set_inline_everything_mode(True)
 torch._C._jit_set_texpr_fuser_enabled(True)
 
-HIDDEN = 64  # hidden units are squared
+HIDDEN = 16  # hidden units are squared
 DELAY = 0
-BATCH_SIZE = 2
-SEQUENCE_LENGTH = 2 ** 14
+BATCH_SIZE = 256
+SEQUENCE_LENGTH = 2**5
 PRINTERVALL = 1
-DEPTH = 1
 DEVICE = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
 DTYPE = torch.float  # torch.double
 
@@ -74,7 +73,7 @@ base_index = batch_index.clone()
 length = tensor.size(0) // SEQUENCE_LENGTH - 1
 len_len = len(str(length))
 
-mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
+# mod = torch.jit.trace(mod, tensor[batch_index].to(DEVICE))
 opt = torch.optim.AdamW(mod.parameters(), lr=0.0625 * 0.5, weight_decay=2e-4)
 sch = torch.optim.lr_scheduler.ReduceLROnPlateau(opt, patience=256, factor=0.4)  # 1024
 
@@ -101,9 +100,11 @@ while True:
                 acc = (tgt == out.argmax(1)).sum().detach() / tgt.numel() * 100
                 mean_acc += acc
                 print(
-                    f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / PRINTERVALL:7.4f} - Mean: {mean_loss.item() / i:7.4f}"
-                    f" | Acc: {acc.item():6.2f}% - Mean: {mean_acc.item() / (i / PRINTERVALL):6.2f}% - LR: {opt.param_groups[0]['lr']:.6f}"
-                    f" | Batch/s: {i / (time.time() - start_time):.3f}s")
+                    f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / PRINTERVALL:7.4f} - "
+                    f"Mean: {mean_loss.item() / i:7.4f}"
+                    f" | Acc: {acc.item():6.2f}% - Mean: {mean_acc.item() / (i / PRINTERVALL):6.2f}% - "
+                    f"LR: {opt.param_groups[0]['lr']:.6f}"
+                    f" | Batch/s: {i / (time.time() - start_time):.3f}")
                 curr_loss = 0
                 sch.step(curr_loss)
 
