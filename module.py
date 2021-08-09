@@ -6,8 +6,9 @@ import torch.nn.functional
 
 @torch.jit.script
 def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
-    return torch.nn.functional.instance_norm(torch.nn.functional.relu(fn_input).unsqueeze(1)).squeeze(1)
-
+    out = torch.nn.functional.relu(fn_input)
+    out = out - out.mean(-1, keepdim=True)
+    return out / (torch.sqrt(torch.square(out).sum(-1, keepdim=True) + 1e-5) * out.size(-1) ** 0.5)
 
 
 @torch.jit.script

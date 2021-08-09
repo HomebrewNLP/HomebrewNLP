@@ -27,7 +27,7 @@ torch._C._jit_set_texpr_fuser_enabled(True)
 torch._C._jit_set_nvfuser_enabled(False)
 
 
-HIDDEN = 16  # hidden units are squared
+HIDDEN = 16 # hidden units are squared
 DELAY = 0
 BATCH_SIZE = 256
 SEQUENCE_LENGTH = 2**5
