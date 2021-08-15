@@ -1,7 +1,9 @@
+import math
 import typing
 
 import torch
 import torch.nn.functional
+import torch.utils.checkpoint
 
 
 @torch.jit.script
@@ -114,15 +116,34 @@ replace = ReplaceGrad().apply
 fn = ReversibleRNNFunction().apply
 
 
+def orthogonal(size: int) -> torch.Tensor:
+    return torch.randn((size, size)).qr().Q
+
+
+def orthogonal_param(size: int) -> torch.nn.Parameter:
+    return torch.nn.Parameter(orthogonal(size))
+
+
+def orthogonal_param_batch(size: int) -> torch.nn.Parameter:
+    return torch.nn.Parameter(orthogonal(size).unsqueeze(0))
+
+
+class Output(torch.nn.Module):
+    def __init__(self, hidden_features: int, out_features: int):
+        super(Output, self).__init__()
+        self.out_linear = torch.nn.Parameter(torch.randn((1, hidden_features, out_features)))
+
+    def forward(self, out):
+        return torch.bmm(out, self.out_linear.expand(out.size(0), -1, -1))
+
+
 class FixedRevRNN(torch.nn.Module):
-    def __init__(self, input_cases, hidden_features, out_features, return_sequences=False, delay=8, input_count=0,
-                 embedding_std=1):
+    def __init__(self, input_cases, hidden_features, out_features, delay=8, input_count=0, embedding_std=1):
         """
 
         :param input_cases: Input cases/max embedding index (not learned, can be extended)
         :param hidden_features: Base of a square feature matrix.
         :param out_features:
-        :param return_sequences:
         :param delay:
         :param input_count:
         """
@@ -131,24 +152,23 @@ class FixedRevRNN(torch.nn.Module):
             raise UserWarning("No input count given")
 
         hidden_features = hidden_features ** 2
-        self.return_sequences = return_sequences
         self.delay = delay
         self.input_count = input_count
 
         self.hidden_features = hidden_features
 
         features_sqrt = int(hidden_features ** 0.5)
-        self.linear_param0a = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.linear_param0b = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.linear_param0c = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.linear_param1a = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.linear_param1b = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.linear_param1c = torch.nn.Parameter(torch.randn((hidden_features, hidden_features)).qr().Q)
-        self.out_linear = torch.nn.Parameter(torch.zeros((1, 2 * hidden_features, out_features)))
+        self.linear_param0a = orthogonal_param(hidden_features)
+        self.linear_param0b = orthogonal_param(hidden_features)
+        self.linear_param0c = orthogonal_param(hidden_features)
+        self.linear_param1a = orthogonal_param(hidden_features)
+        self.linear_param1b = orthogonal_param(hidden_features)
+        self.linear_param1c = orthogonal_param(hidden_features)
         self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features)).mul(embedding_std))
+        self.output = Output(hidden_features * 2, out_features)
 
-        self.register_buffer("hidden_state0", torch.randn(features_sqrt, features_sqrt).qr().Q.unsqueeze(0))
-        self.register_buffer("hidden_state1", torch.randn(features_sqrt, features_sqrt).qr().Q.unsqueeze(0))
+        self.register_buffer("hidden_state0", orthogonal(features_sqrt).unsqueeze(0))
+        self.register_buffer("hidden_state1", orthogonal(features_sqrt).unsqueeze(0))
 
     def _call(self, inp: typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
               sequence_inp: torch.Tensor,
@@ -175,9 +195,69 @@ class FixedRevRNN(torch.nn.Module):
         out = replace(*out)
         outputs = outputs[:-2] + list(out)
         out = torch.cat(outputs[self.delay:], 1).view(batch, base_seq, -1)
-        return torch.bmm(out, self.out_linear.expand(batch, -1, -1))
+        return self.output(out)
 
 
 class Transpose(torch.nn.Module):
     def forward(self, fn_input: torch.Tensor) -> torch.Tensor:
         return fn_input.transpose(1, 2)
+
+
+@torch.jit.script
+def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor, batch: int) -> torch.Tensor:
+    out = inp.bmm(weight0.expand(batch, -1, -1))
+    out = _activate_norm(out)
+    return out.bmm(weight1.expand(batch, -1, -1))
+
+
+class LinearAttentionCell(torch.jit.ScriptModule):
+    def __init__(self, hidden_features):
+        super(LinearAttentionCell, self).__init__()
+        self.pre_attn0 = orthogonal_param_batch(hidden_features)
+        self.pre_attn1 = orthogonal_param_batch(hidden_features)
+        self.pre_ff0 = orthogonal_param_batch(hidden_features)
+        self.pre_ff1 = orthogonal_param_batch(hidden_features)
+
+    def forward(self, inp: torch.Tensor, pos_embd: torch.Tensor, divisor: torch.Tensor) -> torch.Tensor:
+        batch = inp.size(0)
+        out = inp + pos_embd
+        depthwise = feed_forward(out, self.pre_attn0, self.pre_attn1, batch).cumsum(1) / divisor
+        pointwise = feed_forward(out, self.pre_ff0, self.pre_ff1, batch)
+        summed = depthwise + pointwise
+        return inp * (1 + summed) + summed
+
+
+class LinearAttention(torch.jit.ScriptModule):
+    """
+    One idea would be to run linear attention at every step in an rnn
+    """
+
+    def __init__(self, input_cases, hidden_features, out_features, delay=8, input_count=0, embedding_std=1):
+        super(LinearAttention, self).__init__()
+
+        hidden_features = hidden_features ** 2
+
+        self.cells = torch.nn.ModuleList([LinearAttentionCell(hidden_features) for _ in range(delay)])
+        self.output = Output(hidden_features, out_features)
+
+        self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features)).mul(embedding_std))
+        self.pos_embd_scale = torch.nn.Parameter(torch.ones((1, 1, hidden_features,)).mul(embedding_std))
+
+        pos_embd = torch.range(1, input_count).unsqueeze(1)
+        feature_embd = torch.range(1, hidden_features).unsqueeze(0)
+        additive = feature_embd % 2
+        feature_embd = (feature_embd - additive) / 2
+        additive *= math.pi
+        feature_embd *= 8 / hidden_features
+        feature_embd -= math.log(input_count / 2 / math.pi)
+        feature_embd = torch.exp(feature_embd) + additive
+        self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / delay).unsqueeze(0))
+        self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
+
+    def forward(self, fn_input: torch.Tensor):
+        inp = self.embedding[fn_input]
+        scaled_posemdb = self.pos_embd * self.pos_embd_scale
+        for c in self.cells:
+            # inp = c(inp, scaled_posemdb, self.divisor)
+            inp = torch.utils.checkpoint.checkpoint(c, inp, scaled_posemdb, self.divisor)
+        return self.output(inp)
