@@ -128,13 +128,8 @@ def orthogonal_param_batch(size: int) -> torch.nn.Parameter:
     return torch.nn.Parameter(orthogonal(size).unsqueeze(0))
 
 
-class Output(torch.nn.Module):
-    def __init__(self, hidden_features: int, out_features: int):
-        super(Output, self).__init__()
-        self.out_linear = torch.nn.Parameter(torch.randn((1, hidden_features, out_features)))
-
-    def forward(self, out):
-        return torch.bmm(out, self.out_linear.expand(out.size(0), -1, -1))
+def output(hidden_features, out_features):
+    return torch.nn.Conv1d(hidden_features, out_features, 1)
 
 
 class FixedRevRNN(torch.nn.Module):
@@ -165,7 +160,7 @@ class FixedRevRNN(torch.nn.Module):
         self.linear_param1b = orthogonal_param(hidden_features)
         self.linear_param1c = orthogonal_param(hidden_features)
         self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features)).mul(embedding_std))
-        self.output = Output(hidden_features * 2, out_features)
+        self.output = output(hidden_features * 2, out_features)
 
         self.register_buffer("hidden_state0", orthogonal(features_sqrt).unsqueeze(0))
         self.register_buffer("hidden_state1", orthogonal(features_sqrt).unsqueeze(0))
@@ -191,10 +186,10 @@ class FixedRevRNN(torch.nn.Module):
                 outputs.extend(list(out)[:2])
         for idx in range(base_seq, seq):
             out = self._call(out, zeros, not idx)
-            outputs.extend(list(out)[:2])
+            outputs.extend(list(oout)[:2])
         out = replace(*out)
         outputs = outputs[:-2] + list(out)
-        out = torch.cat(outputs[self.delay:], 1).view(batch, base_seq, -1)
+        out = torch.cat(outputs[self.delay:], 1).view(batch, base_seq, -1).transpose(1, 2)
         return self.output(out)
 
 
@@ -210,21 +205,33 @@ def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor
     return out.bmm(weight1.expand(batch, -1, -1))
 
 
+class FeedForward(torch.jit.ScriptModule):
+    __contant__ = __constants__ = ["kernel_size"]
+
+    def __init__(self, hidden_features, kernel_size=7, intermediate_factor=1):
+        super().__init__()
+        self.kernel_size = kernel_size
+        self.conv0 = torch.nn.Conv1d(hidden_features, hidden_features * intermediate_factor, kernel_size, bias=False)
+        self.conv1 = torch.nn.Conv1d(hidden_features * intermediate_factor, hidden_features, kernel_size, bias=False)
+
+    def forward(self, inp: torch.Tensor):
+        inp = self.conv0(torch.nn.functional.pad(inp, (self.kernel_size - 1, 0)))
+        inp = _activate_norm(inp)
+        inp = self.conv1(torch.nn.functional.pad(inp, (self.kernel_size - 1, 0)))
+        return inp
+
+
 class LinearAttentionCell(torch.jit.ScriptModule):
     def __init__(self, hidden_features):
         super(LinearAttentionCell, self).__init__()
-        self.pre_attn0 = orthogonal_param_batch(hidden_features)
-        self.pre_attn1 = orthogonal_param_batch(hidden_features)
-        self.pre_ff0 = orthogonal_param_batch(hidden_features)
-        self.pre_ff1 = orthogonal_param_batch(hidden_features)
+        self.depth = FeedForward(hidden_features)
+        self.point = FeedForward(hidden_features)
+        self.shift = FeedForward(hidden_features)
 
     def forward(self, inp: torch.Tensor, pos_embd: torch.Tensor, divisor: torch.Tensor) -> torch.Tensor:
-        batch = inp.size(0)
         out = inp + pos_embd
-        depthwise = feed_forward(out, self.pre_attn0, self.pre_attn1, batch).cumsum(1) / divisor
-        pointwise = feed_forward(out, self.pre_ff0, self.pre_ff1, batch)
-        summed = depthwise + pointwise
-        return inp * (1 + summed) + summed
+        depthwise = self.depth(out).cumsum(1) / divisor
+        return _activate_norm(inp * (1 + depthwise + self.point(out)) + self.shift(out))
 
 
 class LinearAttention(torch.jit.ScriptModule):
@@ -238,13 +245,13 @@ class LinearAttention(torch.jit.ScriptModule):
         hidden_features = hidden_features ** 2
 
         self.cells = torch.nn.ModuleList([LinearAttentionCell(hidden_features) for _ in range(delay)])
-        self.output = Output(hidden_features, out_features)
+        self.output = output(hidden_features, out_features)
 
         self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features)).mul(embedding_std))
-        self.pos_embd_scale = torch.nn.Parameter(torch.ones((1, 1, hidden_features,)).mul(embedding_std))
+        self.pos_embd_scale = torch.nn.Parameter(torch.ones((1, hidden_features, 1)).mul(embedding_std))
 
-        pos_embd = torch.range(1, input_count).unsqueeze(1)
-        feature_embd = torch.range(1, hidden_features).unsqueeze(0)
+        pos_embd = torch.range(1, input_count).unsqueeze(0)
+        feature_embd = torch.range(1, hidden_features).unsqueeze(1)
         additive = feature_embd % 2
         feature_embd = (feature_embd - additive) / 2
         additive *= math.pi
@@ -255,7 +262,7 @@ class LinearAttention(torch.jit.ScriptModule):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
 
     def forward(self, fn_input: torch.Tensor):
-        inp = self.embedding[fn_input]
+        inp = self.embedding[fn_input].transpose(1, 2)
         scaled_posemdb = self.pos_embd * self.pos_embd_scale
         for c in self.cells:
             # inp = c(inp, scaled_posemdb, self.divisor)
