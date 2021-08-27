@@ -3,14 +3,15 @@ import typing
 
 import torch
 import torch.nn.functional
-import torch.utils.checkpoint
+
+QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
 @torch.jit.script
 def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
     out = torch.nn.functional.relu(fn_input)
     out = out - out.mean(-1, keepdim=True)
-    return out / (torch.sqrt(torch.square(out).sum(-1, keepdim=True) + 1e-5) * out.size(-1) ** 0.5)
+    return out / ((out.square().sum(-1, keepdim=True).sqrt() + 1e-5) * out.size(-1) ** -0.5)
 
 
 @torch.jit.script
@@ -100,7 +101,7 @@ class ReversibleRNNFunction(torch.autograd.Function):
         return grad_out + fn_input + (None, None,)
 
 
-class ReplaceGrad(torch.autograd.Function):
+class ReplaceGrad2(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inp0: torch.Tensor, inp1: torch.Tensor, tmp_inp0: torch.Tensor, tmp_inp1: torch.Tensor):
         ctx.save_for_backward(tmp_inp0, tmp_inp1)
@@ -112,8 +113,71 @@ class ReplaceGrad(torch.autograd.Function):
         return grad0, grad1, tmp_inp0, tmp_inp1
 
 
-replace = ReplaceGrad().apply
+class ReplaceGrad1(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inp0: torch.Tensor, inp1: torch.Tensor, tmp_inp0: torch.Tensor, tmp_inp1: torch.Tensor):
+        ctx.save_for_backward(tmp_inp0)
+        return inp0, inp1
+
+    @staticmethod
+    def backward(ctx, grad0: torch.Tensor, grad1: torch.Tensor):
+        tmp_inp0, = ctx.saved_tensors
+        return grad0, tmp_inp0, grad1, torch.zeros_like(tmp_inp0)
+
+
+class ReversibleHalfResidualSwapFn(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x0: torch.Tensor, back_x0: torch.Tensor, x1: torch.Tensor, back_x1: torch.Tensor,
+                mod: torch.nn.Module) -> QUAD_TENSOR:
+        ctx.mod = mod
+        return x1, back_x0, x0 + mod(x1), back_x1
+
+    @staticmethod
+    def backward(ctx, dy0: torch.Tensor, y0: torch.Tensor, dy1: torch.Tensor, y1: torch.Tensor
+                 ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, None]:
+        with torch.enable_grad():
+            y0 = y0.requires_grad_(True)
+            out = ctx.mod(y0)
+        with torch.no_grad():
+            x0 = y1 - out.detach()
+        with torch.enable_grad():
+            dx0, *param_grad = torch.autograd.grad(out, (y0,) + tuple(ctx.mod.parameters()), dy1)
+        with torch.no_grad():
+            for p, g in zip(ctx.mod.parameters(), param_grad):
+                if p.grad is None:
+                    p.grad = g
+                else:
+                    p.grad.data.add_(g)
+        with torch.enable_grad():
+            return dy1.detach(), x0.detach(), dx0.add(dy0).detach(), y0.detach(), None
+
+
+replace1 = ReplaceGrad1().apply
+replace2 = ReplaceGrad2().apply
 fn = ReversibleRNNFunction().apply
+reverse = ReversibleHalfResidualSwapFn().apply
+
+
+class ReversibleModule(torch.nn.Module):
+    def __init__(self, wrapped_module: torch.nn.Module):
+        super(ReversibleModule, self).__init__()
+        self.wrapped_module = wrapped_module
+
+    def forward(self, inp: QUAD_TENSOR) -> QUAD_TENSOR:
+        return reverse(*inp, self.wrapped_module)
+
+
+class ReversibleSequential(torch.nn.Module):
+    def __init__(self, *modules, split_dim=1):
+        super(ReversibleSequential, self).__init__()
+        self.stem = torch.nn.Sequential(*[m if isinstance(m, ReversibleModule) else ReversibleModule(m)
+                                          for m in modules])
+        self.split_dim = split_dim
+
+    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+        inp0, inp1 = inp.chunk(2, self.split_dim)
+        zeros = torch.zeros_like(inp0)
+        return torch.cat(replace1(*self.stem((inp0, zeros, inp1, zeros))), dim=self.split_dim)
 
 
 def orthogonal(size: int) -> torch.Tensor:
@@ -186,8 +250,8 @@ class FixedRevRNN(torch.nn.Module):
                 outputs.extend(list(out)[:2])
         for idx in range(base_seq, seq):
             out = self._call(out, zeros, not idx)
-            outputs.extend(list(oout)[:2])
-        out = replace(*out)
+            outputs.extend(list(out)[:2])
+        out = replace2(*out)
         outputs = outputs[:-2] + list(out)
         out = torch.cat(outputs[self.delay:], 1).view(batch, base_seq, -1).transpose(1, 2)
         return self.output(out)
@@ -199,42 +263,49 @@ class Transpose(torch.nn.Module):
 
 
 @torch.jit.script
-def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor, batch: int) -> torch.Tensor:
-    out = inp.bmm(weight0.expand(batch, -1, -1))
-    out = _activate_norm(out)
-    return out.bmm(weight1.expand(batch, -1, -1))
+def conv(inp: torch.Tensor, weight: torch.Tensor, kernel_size: int) -> torch.Tensor:
+    return torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (kernel_size - 1, 0)), weight)
 
 
-class FeedForward(torch.jit.ScriptModule):
-    __contant__ = __constants__ = ["kernel_size"]
+@torch.jit.script
+def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor, kernel_size: int) -> torch.Tensor:
+    return conv(_activate_norm(conv(inp, weight0, kernel_size)), weight1, kernel_size)
 
+
+class FeedForward(torch.nn.Module):
     def __init__(self, hidden_features, kernel_size=7, intermediate_factor=1):
         super().__init__()
         self.kernel_size = kernel_size
-        self.conv0 = torch.nn.Conv1d(hidden_features, hidden_features * intermediate_factor, kernel_size, bias=False)
-        self.conv1 = torch.nn.Conv1d(hidden_features * intermediate_factor, hidden_features, kernel_size, bias=False)
+        self.w0 = torch.nn.Conv1d(hidden_features, hidden_features * intermediate_factor, kernel_size,
+                                  bias=False).weight
+        self.w1 = torch.nn.Conv1d(hidden_features * intermediate_factor, hidden_features, kernel_size,
+                                  bias=False).weight
 
     def forward(self, inp: torch.Tensor):
-        inp = self.conv0(torch.nn.functional.pad(inp, (self.kernel_size - 1, 0)))
-        inp = _activate_norm(inp)
-        inp = self.conv1(torch.nn.functional.pad(inp, (self.kernel_size - 1, 0)))
-        return inp
+        return feed_forward(inp, self.w0, self.w1, self.kernel_size)
 
 
-class LinearAttentionCell(torch.jit.ScriptModule):
-    def __init__(self, hidden_features):
+@torch.jit.script
+def linear_attention(inp: torch.Tensor, depth: torch.Tensor, point: torch.Tensor, shift: torch.Tensor,
+                     divisor: torch.Tensor) -> torch.Tensor:
+    return _activate_norm(inp * (depth.cumsum(1) / divisor + point) + shift)
+
+
+class LinearAttentionCell(torch.nn.Module):
+    def __init__(self, hidden_features, base):
         super(LinearAttentionCell, self).__init__()
+        self.pos_embd = lambda: base.pos_embd
+        self.divisor = lambda: base.divisor
         self.depth = FeedForward(hidden_features)
         self.point = FeedForward(hidden_features)
         self.shift = FeedForward(hidden_features)
 
-    def forward(self, inp: torch.Tensor, pos_embd: torch.Tensor, divisor: torch.Tensor) -> torch.Tensor:
-        out = inp + pos_embd
-        depthwise = self.depth(out).cumsum(1) / divisor
-        return _activate_norm(inp * (1 + depthwise + self.point(out)) + self.shift(out))
+    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+        out = inp + self.pos_embd()
+        return linear_attention(inp, self.depth(out), self.point(out), self.shift(out), self.divisor())
 
 
-class LinearAttention(torch.jit.ScriptModule):
+class LinearAttention(torch.nn.Module):
     """
     One idea would be to run linear attention at every step in an rnn
     """
@@ -244,15 +315,11 @@ class LinearAttention(torch.jit.ScriptModule):
 
         hidden_features = hidden_features ** 2
 
-        self.cells = torch.nn.ModuleList([LinearAttentionCell(hidden_features) for _ in range(delay)])
-        self.output = output(hidden_features, out_features)
+        self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features * 2)).mul(embedding_std))
 
-        self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features)).mul(embedding_std))
-        self.pos_embd_scale = torch.nn.Parameter(torch.ones((1, hidden_features, 1)).mul(embedding_std))
-
-        pos_embd = torch.range(1, input_count).unsqueeze(0)
-        feature_embd = torch.range(1, hidden_features).unsqueeze(1)
-        additive = feature_embd % 2
+        pos_embd = torch.arange(0, input_count).unsqueeze(0) + 1
+        feature_embd = torch.arange(0, hidden_features).unsqueeze(1) + 1
+        additive = (feature_embd % 2).to(torch.float)
         feature_embd = (feature_embd - additive) / 2
         additive *= math.pi
         feature_embd *= 8 / hidden_features
@@ -260,11 +327,8 @@ class LinearAttention(torch.jit.ScriptModule):
         feature_embd = torch.exp(feature_embd) + additive
         self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / delay).unsqueeze(0))
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
+        self.stem = ReversibleSequential(*[LinearAttentionCell(hidden_features, self) for _ in range(delay)])
+        self.output = output(hidden_features * 2, out_features)
 
-    def forward(self, fn_input: torch.Tensor):
-        inp = self.embedding[fn_input].transpose(1, 2)
-        scaled_posemdb = self.pos_embd * self.pos_embd_scale
-        for c in self.cells:
-            # inp = c(inp, scaled_posemdb, self.divisor)
-            inp = torch.utils.checkpoint.checkpoint(c, inp, scaled_posemdb, self.divisor)
-        return self.output(inp)
+    def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
+        return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding[inp].transpose(1, 2))), tgt)
