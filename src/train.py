@@ -48,8 +48,8 @@ def init(module: torch.nn.Module):
 def main(ctx: Context):
     dtype = torch.float16 if ctx.model.float16 else torch.float
 
-    config = {"train_batch_size": ctx.model.batch_size * ctx.train.gradient_accumulation_steps,
-              "gradient_accumulation_steps": ctx.train.gradient_accumulation_steps,
+    config = {"train_batch_size": ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps,
+              "gradient_accumulation_steps": ctx.optimizer.gradient_accumulation_steps,
               "optimizer": {"type": "Adam", "params": {"lr": ctx.optimizer.learning_rate}},
               "fp16": {"enabled": ctx.model.float16},
               "zero_optimization": {"stage": 3,
@@ -65,7 +65,10 @@ def main(ctx: Context):
                                     "stage3_prefetch_bucket_size": 5e7,
                                     "stage3_param_persistence_threshold": 1e6,
                                     "elastic_checkpoint": True},
-              "activation_checkpointing": {"cpu_checkpointing": True, "contiguous_memory_optimization": True}
+              "activation_checkpointing": {"cpu_checkpointing": True, "contiguous_memory_optimization": True},
+              "steps_per_print": ctx.log.deepspeed_steps_per_print,
+              "wall_clock_breakdown": ctx.log.wall_clock_breakdown,
+              "dump_state": ctx.log.dump_state
               }
 
     mod = module.LinearAttention(ctx)
@@ -79,7 +82,7 @@ def main(ctx: Context):
     tensor = torch.load('out.tensor')
     tensor = tensor.long()
 
-    batch_index = torch.arange(0, ctx.model.batch_size * ctx.train.gradient_accumulation_steps).view(-1, 1)
+    batch_index = torch.arange(0, ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps).view(-1, 1)
     item_index = torch.arange(0, ctx.model.sequence_length).view(1, -1)
     batch_index = batch_index + item_index
 
@@ -101,11 +104,10 @@ def main(ctx: Context):
                 mod.step()
                 curr_loss += lss.detach()
                 batch_index += ctx.model.sequence_length
-                if i % ctx.train.print_interval == 0:
+                if i % ctx.log.loss_steps_per_print == 0:
                     mean_loss += curr_loss
-                    print(
-                        f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / ctx.train.print_interval:7.4f} - "
-                        f"Mean: {mean_loss.item() / i:7.4f} | "
-                        f"LR: {opt.param_groups[0]['lr']:.6f}"
-                        f" | Batch/s: {i / (time.time() - start_time):.3f}")
+                    print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
+                          f"Mean: {mean_loss.item() / i:7.4f} |",
+                          f"LR: {opt.param_groups[0]['lr']:.6f}",
+                          f"| Batch/s: {i / (time.time() - start_time):.3f}")
                     curr_loss = 0

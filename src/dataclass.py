@@ -24,6 +24,13 @@ class Model(DataClass):
     feed_forward_intermediate_factor: float = 2.
 
 
+class Log(DataClass):
+    deepspeed_steps_per_print: int = 2 ** 20
+    wall_clock_breakdown: bool = False
+    dump_state: bool = False
+    loss_steps_per_print: int = 32
+
+
 class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
@@ -32,11 +39,6 @@ class Dataset(DataClass):
 class Optimizer(DataClass):
     learning_rate: float = 3e-4
     optimizer_type: str = "Adam"
-
-
-class Train(DataClass):
-    print_interval: int = 32
-    features: int = 256
     gradient_accumulation_steps: int = 1
 
 
@@ -59,7 +61,7 @@ def serialize(instance: typing.Union[typing.Dict[str, DataClass], DataClass]):
 
 class Context(DataClass):
     def __init__(self, config: typing.Optional[typing.Dict[str, typing.Any]] = None):
-        self.train = Train()
+        self.log = Log()
         self.optimizer = Optimizer()
         self.dataset = Dataset()
         self.model = Model()
