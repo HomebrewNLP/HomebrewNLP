@@ -59,8 +59,10 @@ class LinearAttention(torch.nn.Module):
 
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
-        self.embedding = torch.nn.Parameter(torch.randn((ctx.dataset.classes,
-                                                         ctx.model.features * 2)).mul(ctx.model.input_embedding_std))
+
+        self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2)
+        self.embedding.weight.data.mul_(ctx.model.input_embedding_std)
+
         init_scale = ctx.model.depth ** 0.5
         pos_embd = torch.arange(0, ctx.dataset.classes).unsqueeze(0) + 1
         feature_embd = torch.arange(0, ctx.model.features).unsqueeze(1) + 1
@@ -73,12 +75,13 @@ class LinearAttention(torch.nn.Module):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
         pos_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std / init_scale).unsqueeze(0)
         self.register_buffer("pos_embd", pos_embd)
+
         self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(self, ctx, init_scale)
                                                    for _ in range(ctx.model.depth)] * ctx.model.weight_shared_blocks))
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
-        return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding[inp].transpose(1, 2))), tgt)
+        return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding(inp).transpose(1, 2))), tgt)
 
 
 class LinearAttentionCell(torch.nn.Module):
