@@ -74,7 +74,7 @@ class LinearAttention(torch.nn.Module):
         pos_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std / init_scale).unsqueeze(0)
         self.register_buffer("pos_embd", pos_embd)
         self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(self, ctx, init_scale)
-                                                   for _ in range(ctx.model.device)] * ctx.model.weight_shared_blocks))
+                                                   for _ in range(ctx.model.depth)] * ctx.model.weight_shared_blocks))
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
