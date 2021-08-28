@@ -50,7 +50,7 @@ def main(ctx: Context):
 
     config = {"train_batch_size": ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps,
               "gradient_accumulation_steps": ctx.optimizer.gradient_accumulation_steps,
-              "optimizer": {"type": "Adam", "params": {"lr": ctx.optimizer.learning_rate}},
+              "optimizer": {"type": "Adam"},
               "fp16": {"enabled": ctx.model.float16},
               "zero_optimization": {"stage": 3,
                                     "cpu_offload": True,
@@ -68,10 +68,20 @@ def main(ctx: Context):
               "steps_per_print": ctx.log.deepspeed_steps_per_print,
               "wall_clock_breakdown": ctx.log.wall_clock_breakdown,
               "dump_state": ctx.log.dump_state,
-              "scheduler": {"type": "WarmupLR",
-                            "params": {"warmup_min_lr": 0,
-                                       "warmup_max_lr": ctx.optimizer.learning_rate,
-                                       "warmup_num_steps": ctx.optimizer.warmup_steps
+              "scheduler": {"type": "OneCycle",
+                            "params": {"cycle_min_lr": ctx.optimizer.one_cycle.cycle_min_lr,
+                                       "cycle_max_lr": ctx.optimizer.one_cycle.cycle_max_lr,
+                                       "decay_lr_rate": ctx.optimizer.one_cycle.decay_lr_rate,
+                                       "cycle_first_step_size": ctx.optimizer.one_cycle.cycle_first_step_size,
+                                       "cycle_second_step_size": ctx.optimizer.one_cycle.cycle_second_step_size,
+                                       "cycle_first_stair_count": ctx.optimizer.one_cycle.cycle_first_stair_count,
+                                       "cycle_second_stair_count": ctx.optimizer.one_cycle.cycle_second_stair_count,
+                                       "decay_step_size": ctx.optimizer.one_cycle.decay_step_size,
+                                       "cycle_momentum": ctx.optimizer.one_cycle.cycle_momentum,
+                                       "cycle_min_mom": ctx.optimizer.one_cycle.cycle_min_mom,
+                                       "cycle_max_mom": ctx.optimizer.one_cycle.cycle_max_mom,
+                                       "decay_mom_rate": ctx.optimizer.one_cycle.decay_mom_rate,
+                                       "last_batch_iteration": ctx.optimizer.one_cycle.last_batch_iteration
                                        }
                             }
               }
