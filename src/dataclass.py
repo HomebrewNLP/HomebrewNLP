@@ -41,9 +41,10 @@ class Train(DataClass):
 
 
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
-    for name, attr in instance.__dict__.items():
-        if name not in config:
+    for name in dir(instance):
+        if name.startswith("_") or name.endswith("_") or name not in config:
             continue
+        attr = getattr(instance, name)
         if isinstance(attr, DataClass):
             init_class(attr, config[name])
             continue
@@ -62,7 +63,6 @@ class Context(DataClass):
         self.optimizer = Optimizer()
         self.dataset = Dataset()
         self.model = Model()
-
         if len(sys.argv) > 1 and sys.argv[1].endswith('.yaml'):
             with open(sys.argv[1]) as f:
                 cfg = f.read()
