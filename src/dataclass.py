@@ -46,7 +46,7 @@ class Dataset(DataClass):
 
 
 class OneCycle(DataClass):
-    cycle_min_lr: float = 1e-4  # Base learning rate used at the start and end of cycle.
+    cycle_min_lr: float = 3e-4  # Base learning rate used at the start and end of cycle.
     cycle_max_lr: float = 1e-3  # Learning rate used in the middle of the cycle. Can be smaller than cycle_min_lr
     decay_lr_rate: float = 1e-4  # Decay rate for learning rate.
     cycle_first_step_size: int = 2048  # Number of training iterations in the increasing half of a cycle.
