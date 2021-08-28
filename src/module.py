@@ -15,10 +15,6 @@ def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
     return out / ((out.square().sum(-1, keepdim=True).sqrt() + 1e-5) * out.size(-1) ** -0.5)
 
 
-def output(hidden_features, out_features):
-    return torch.nn.Conv1d(hidden_features, out_features, 1)
-
-
 @torch.jit.script
 def conv(inp: torch.Tensor, weight: torch.Tensor, kernel_size: int) -> torch.Tensor:
     return torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (kernel_size - 1, 0)), weight)
@@ -33,10 +29,9 @@ class FeedForward(torch.nn.Module):
     def __init__(self, hidden_features: int, kernel_size: int, intermediate_factor: float):
         super().__init__()
         self.kernel_size = kernel_size
-        self.w0 = torch.nn.Conv1d(hidden_features, hidden_features * intermediate_factor, kernel_size,
-                                  bias=False).weight
-        self.w1 = torch.nn.Conv1d(hidden_features * intermediate_factor, hidden_features, kernel_size,
-                                  bias=False).weight
+        intermediate = int(hidden_features * intermediate_factor)
+        self.w0 = torch.nn.Conv1d(hidden_features, intermediate, (kernel_size,), bias=False).weight
+        self.w1 = torch.nn.Conv1d(intermediate, hidden_features, (kernel_size,), bias=False).weight
 
     def forward(self, inp: torch.Tensor):
         return feed_forward(inp, self.w0, self.w1, self.kernel_size)
@@ -72,7 +67,7 @@ class LinearAttention(torch.nn.Module):
         self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(hidden_features, self, conv_kernel_size,
                                                                        feed_forward_intermediate_factor)
                                                    for _ in range(depth)] * weight_shared_blocks))
-        self.output = output(hidden_features * 2, out_features)
+        self.output = torch.nn.Conv1d(hidden_features * 2, out_features, 1)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
         return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding[inp].transpose(1, 2))), tgt)
