@@ -69,9 +69,6 @@ class LinearAttention(torch.nn.Module):
 
     def __init__(self, input_cases, hidden_features, out_features, delay=8, input_count=0, embedding_std=1):
         super(LinearAttention, self).__init__()
-
-        hidden_features = hidden_features ** 2
-
         self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features * 2)).mul(embedding_std))
 
         pos_embd = torch.arange(0, input_count).unsqueeze(0) + 1
