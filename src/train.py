@@ -73,7 +73,9 @@ def main(ctx: Context):
                                  ctx.dataset.classes,
                                  depth=ctx.model.depth,
                                  input_count=ctx.model.sequence_length,
-                                 weight_shared_blocks=ctx.model.weight_shared_blocks)
+                                 weight_shared_blocks=ctx.model.weight_shared_blocks,
+                                 feed_forward_intermediate_factor=ctx.model.feed_forward_intermediate_factor,
+                                 conv_kernel_size=ctx.model.conv_kernel_size)
     mod = mod.to(device=ctx.model.device, dtype=dtype)
     mod.apply(init)
     print(mod)

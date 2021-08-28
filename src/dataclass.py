@@ -17,6 +17,8 @@ class Model(DataClass):
     float16: bool = False
     device: str = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     weight_shared_blocks: int = 1
+    conv_kernel_size: int = 7
+    feed_forward_intermediate_factor: float = 2.
 
 
 class Dataset(DataClass):

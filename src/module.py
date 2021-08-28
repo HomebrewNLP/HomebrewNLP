@@ -30,7 +30,7 @@ def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, hidden_features, kernel_size=7, intermediate_factor=1):
+    def __init__(self, hidden_features: int, kernel_size: int, intermediate_factor: float):
         super().__init__()
         self.kernel_size = kernel_size
         self.w0 = torch.nn.Conv1d(hidden_features, hidden_features * intermediate_factor, kernel_size,
@@ -48,27 +48,14 @@ def linear_attention(inp: torch.Tensor, depth: torch.Tensor, point: torch.Tensor
     return _activate_norm(inp * (depth.cumsum(1) / divisor + point) + shift)
 
 
-class LinearAttentionCell(torch.nn.Module):
-    def __init__(self, hidden_features, base):
-        super(LinearAttentionCell, self).__init__()
-        self.pos_embd = lambda: base.pos_embd
-        self.divisor = lambda: base.divisor
-        self.depth = FeedForward(hidden_features)
-        self.point = FeedForward(hidden_features)
-        self.shift = FeedForward(hidden_features)
-
-    def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        out = inp + self.pos_embd()
-        return linear_attention(inp, self.depth(out), self.point(out), self.shift(out), self.divisor())
-
-
 class LinearAttention(torch.nn.Module):
     """
     One idea would be to run linear attention at every step in an rnn
     """
 
     def __init__(self, input_classes: int, hidden_features: int, out_features: int, depth: int = 8,
-                 input_count: int = 0, embedding_std: float = 1, weight_shared_blocks: int = 1):
+                 input_count: int = 0, embedding_std: float = 1, weight_shared_blocks: int = 1,
+                 conv_kernel_size: int = 7, feed_forward_intermediate_factor: float = 2.):
         super(LinearAttention, self).__init__()
         self.embedding = torch.nn.Parameter(torch.randn((input_classes, hidden_features * 2)).mul(embedding_std))
 
@@ -82,9 +69,24 @@ class LinearAttention(torch.nn.Module):
         feature_embd = torch.exp(feature_embd) + additive
         self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / depth).unsqueeze(0))
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(hidden_features, self) for _ in range(depth)] *
-                                                  weight_shared_blocks))
+        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(hidden_features, self, conv_kernel_size,
+                                                                       feed_forward_intermediate_factor)
+                                                   for _ in range(depth)] * weight_shared_blocks))
         self.output = output(hidden_features * 2, out_features)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
         return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding[inp].transpose(1, 2))), tgt)
+
+
+class LinearAttentionCell(torch.nn.Module):
+    def __init__(self, hidden_features: int, base: LinearAttention, kernel_size: int, intermediate_factor: float):
+        super(LinearAttentionCell, self).__init__()
+        self.pos_embd = lambda: base.pos_embd
+        self.divisor = lambda: base.divisor
+        self.depth = FeedForward(hidden_features, kernel_size, intermediate_factor)
+        self.point = FeedForward(hidden_features, kernel_size, intermediate_factor)
+        self.shift = FeedForward(hidden_features, kernel_size, intermediate_factor)
+
+    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+        out = inp + self.pos_embd()
+        return linear_attention(inp, self.depth(out), self.point(out), self.shift(out), self.divisor())
