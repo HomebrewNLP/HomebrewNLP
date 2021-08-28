@@ -1,0 +1,2 @@
+revlib>=1.0.5
+deepspeed>=0.5.1
