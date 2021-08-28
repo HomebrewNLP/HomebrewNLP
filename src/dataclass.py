@@ -14,6 +14,9 @@ class Model(DataClass):
     depth: int = 64
     batch_size: int = 128
     sequence_length: int = 256
+    activation_std: float = 0.5893595616022745  # std(relu(torch.randn((inf,)))) == 0.5893595616022745
+    input_embedding_std: float = 1.
+    position_embedding_std: float = 1.
     float16: bool = False
     device: str = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     weight_shared_blocks: int = 1

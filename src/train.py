@@ -68,14 +68,7 @@ def main(ctx: Context):
               "activation_checkpointing": {"cpu_checkpointing": True, "contiguous_memory_optimization": True}
               }
 
-    mod = module.LinearAttention(ctx.dataset.classes,
-                                 ctx.model.features,
-                                 ctx.dataset.classes,
-                                 depth=ctx.model.depth,
-                                 input_count=ctx.model.sequence_length,
-                                 weight_shared_blocks=ctx.model.weight_shared_blocks,
-                                 feed_forward_intermediate_factor=ctx.model.feed_forward_intermediate_factor,
-                                 conv_kernel_size=ctx.model.conv_kernel_size)
+    mod = module.LinearAttention(ctx)
     mod = mod.to(device=ctx.model.device, dtype=dtype)
     mod.apply(init)
     print(mod)

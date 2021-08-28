@@ -4,6 +4,7 @@ import typing
 import revlib
 import torch
 import torch.nn.functional
+from src.dataclass import Context
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
@@ -31,12 +32,15 @@ def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torc
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, hidden_features: int, kernel_size: int, intermediate_factor: float):
+    def __init__(self, ctx: Context, init_scale: float):
         super().__init__()
-        intermediate = int(hidden_features * intermediate_factor)
-        self.w0 = torch.nn.Conv1d(hidden_features, intermediate, (1,), bias=False).weight
-        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (kernel_size,), bias=False).weight
-        self.w2 = torch.nn.Conv1d(intermediate, hidden_features, (1,), bias=False).weight
+        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
+        self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,), bias=False).weight
+        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (ctx.model.conv_kernel_size,), bias=False).weight
+        self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features, (1,), bias=False).weight
+        torch.nn.init.orthogonal_(self.w0.data, 1 / ctx.model.activation_std)
+        torch.nn.init.orthogonal_(self.w1.data, 1 / ctx.model.activation_std)
+        torch.nn.init.orthogonal_(self.w2.data, init_scale)
 
     def forward(self, inp: torch.Tensor):
         return feed_forward(inp, self.w0, self.w1, self.w2)
@@ -53,39 +57,38 @@ class LinearAttention(torch.nn.Module):
     One idea would be to run linear attention at every step in an rnn
     """
 
-    def __init__(self, input_classes: int, hidden_features: int, out_features: int, depth: int = 8,
-                 input_count: int = 0, embedding_std: float = 1, weight_shared_blocks: int = 1,
-                 conv_kernel_size: int = 7, feed_forward_intermediate_factor: float = 2.):
+    def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
-        self.embedding = torch.nn.Parameter(torch.randn((input_classes, hidden_features * 2)).mul(embedding_std))
-
-        pos_embd = torch.arange(0, input_count).unsqueeze(0) + 1
-        feature_embd = torch.arange(0, hidden_features).unsqueeze(1) + 1
+        self.embedding = torch.nn.Parameter(torch.randn((ctx.dataset.classes,
+                                                         ctx.model.features * 2)).mul(ctx.model.input_embedding_std))
+        init_scale = ctx.model.depth ** 0.5
+        pos_embd = torch.arange(0, ctx.dataset.classes).unsqueeze(0) + 1
+        feature_embd = torch.arange(0, ctx.model.features).unsqueeze(1) + 1
         additive = (feature_embd % 2).to(torch.float)
         feature_embd = (feature_embd - additive) / 2
         additive *= math.pi
-        feature_embd *= 8 / hidden_features
-        feature_embd -= math.log(input_count / 2 / math.pi)
+        feature_embd *= 8 / ctx.model.features
+        feature_embd -= math.log(ctx.dataset.classes / 2 / math.pi)
         feature_embd = torch.exp(feature_embd) + additive
-        self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / depth).unsqueeze(0))
+        self.register_buffer("pos_embd", pos_embd)
+        pos_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std / init_scale).unsqueeze(0)
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(hidden_features, self, conv_kernel_size,
-                                                                       feed_forward_intermediate_factor)
-                                                   for _ in range(depth)] * weight_shared_blocks))
-        self.output = torch.nn.Conv1d(hidden_features * 2, out_features, 1)
+        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(self, ctx, init_scale)
+                                                   for _ in range(ctx.model.device)] * ctx.model.weight_shared_blocks))
+        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
         return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding[inp].transpose(1, 2))), tgt)
 
 
 class LinearAttentionCell(torch.nn.Module):
-    def __init__(self, hidden_features: int, base: LinearAttention, kernel_size: int, intermediate_factor: float):
+    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(LinearAttentionCell, self).__init__()
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
-        self.depth = FeedForward(hidden_features, kernel_size, intermediate_factor)
-        self.scale = FeedForward(hidden_features, kernel_size, intermediate_factor)
-        self.shift = FeedForward(hidden_features, kernel_size, intermediate_factor)
+        self.depth = FeedForward(ctx, 1)
+        self.scale = FeedForward(ctx, init_scale / 2)
+        self.shift = FeedForward(ctx, init_scale / 2)
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         out = inp + self.pos_embd()
