@@ -40,6 +40,7 @@ class Optimizer(DataClass):
     learning_rate: float = 3e-4
     optimizer_type: str = "Adam"
     gradient_accumulation_steps: int = 1
+    warmup_steps: int = 2048
 
 
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):

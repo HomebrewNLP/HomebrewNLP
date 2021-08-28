@@ -56,19 +56,24 @@ def main(ctx: Context):
                                     "cpu_offload": True,
                                     "contiguous_gradients": False,
                                     "overlap_comm": True,
-                                    "offload_param": {"device": "cpu",
-                                                      "pin_memory": True},
-                                    "offload_optimizer": {"device": "cpu",
-                                                          "pin_memory": True},
-                                    "stage3_max_live_parameter s": 1e8,
+                                    "offload_param": {"device": "cpu", "pin_memory": True},
+                                    "offload_optimizer": {"device": "cpu", "pin_memory": True},
+                                    "stage3_max_live_parameters": 1e8,
                                     "stage3_max_reuse_distance": 1e8,
                                     "stage3_prefetch_bucket_size": 5e7,
                                     "stage3_param_persistence_threshold": 1e6,
-                                    "elastic_checkpoint": True},
+                                    "elastic_checkpoint": True
+                                    },
               "activation_checkpointing": {"cpu_checkpointing": True, "contiguous_memory_optimization": True},
               "steps_per_print": ctx.log.deepspeed_steps_per_print,
               "wall_clock_breakdown": ctx.log.wall_clock_breakdown,
-              "dump_state": ctx.log.dump_state
+              "dump_state": ctx.log.dump_state,
+              "scheduler": {"type": "WarmupLR",
+                            "params": {"warmup_min_lr": 0,
+                                       "warmup_max_lr": ctx.optimizer.learning_rate,
+                                       "warmup_num_steps": ctx.optimizer.warmup_steps
+                                       }
+                            }
               }
 
     mod = module.LinearAttention(ctx)
