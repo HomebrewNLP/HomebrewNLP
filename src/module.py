@@ -43,9 +43,9 @@ class FeedForward(torch.nn.Module):
 
 
 @torch.jit.script
-def linear_attention(inp: torch.Tensor, depth: torch.Tensor, point: torch.Tensor, shift: torch.Tensor,
+def linear_attention(inp: torch.Tensor, depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor,
                      divisor: torch.Tensor) -> torch.Tensor:
-    return _activate_norm(inp * (depth.cumsum(1) / divisor + point) + shift)
+    return inp + _activate_norm(depth.cumsum(1) / divisor * scale + shift)
 
 
 class LinearAttention(torch.nn.Module):
@@ -84,9 +84,9 @@ class LinearAttentionCell(torch.nn.Module):
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
         self.depth = FeedForward(hidden_features, kernel_size, intermediate_factor)
-        self.point = FeedForward(hidden_features, kernel_size, intermediate_factor)
+        self.scale = FeedForward(hidden_features, kernel_size, intermediate_factor)
         self.shift = FeedForward(hidden_features, kernel_size, intermediate_factor)
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         out = inp + self.pos_embd()
-        return linear_attention(inp, self.depth(out), self.point(out), self.shift(out), self.divisor())
+        return linear_attention(inp, self.depth(out), self.scale(out), self.shift(out), self.divisor())
