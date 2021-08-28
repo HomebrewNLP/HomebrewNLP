@@ -16,6 +16,7 @@ class Model(DataClass):
     sequence_length: int = 256
     float16: bool = False
     device: str = 'cuda:0' if torch.cuda.is_available() else 'cpu'
+    weight_shared_blocks: int = 1
 
 
 class Dataset(DataClass):

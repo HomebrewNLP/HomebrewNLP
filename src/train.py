@@ -71,8 +71,10 @@ def main(ctx: Context):
     mod = module.LinearAttention(ctx.dataset.classes,
                                  ctx.model.features,
                                  ctx.dataset.classes,
-                                 delay=ctx.model.depth,
-                                 input_count=ctx.model.sequence_length).to(device=ctx.model.device, dtype=dtype)
+                                 depth=ctx.model.depth,
+                                 input_count=ctx.model.sequence_length,
+                                 weight_shared_blocks=ctx.model.weight_shared_blocks)
+    mod = mod.to(device=ctx.model.device, dtype=dtype)
     mod.apply(init)
     print(mod)
     parameters = parameter_count(mod)

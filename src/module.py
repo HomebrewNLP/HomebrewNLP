@@ -67,9 +67,10 @@ class LinearAttention(torch.nn.Module):
     One idea would be to run linear attention at every step in an rnn
     """
 
-    def __init__(self, input_cases, hidden_features, out_features, delay=8, input_count=0, embedding_std=1):
+    def __init__(self, input_classes: int, hidden_features: int, out_features: int, depth: int = 8,
+                 input_count: int = 0, embedding_std: float = 1, weight_shared_blocks: int = 1):
         super(LinearAttention, self).__init__()
-        self.embedding = torch.nn.Parameter(torch.randn((input_cases, hidden_features * 2)).mul(embedding_std))
+        self.embedding = torch.nn.Parameter(torch.randn((input_classes, hidden_features * 2)).mul(embedding_std))
 
         pos_embd = torch.arange(0, input_count).unsqueeze(0) + 1
         feature_embd = torch.arange(0, hidden_features).unsqueeze(1) + 1
@@ -79,9 +80,10 @@ class LinearAttention(torch.nn.Module):
         feature_embd *= 8 / hidden_features
         feature_embd -= math.log(input_count / 2 / math.pi)
         feature_embd = torch.exp(feature_embd) + additive
-        self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / delay).unsqueeze(0))
+        self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(embedding_std / depth).unsqueeze(0))
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        self.stem = revlib.ReversibleSequential(*[LinearAttentionCell(hidden_features, self) for _ in range(delay)])
+        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(hidden_features, self) for _ in range(depth)] *
+                                                  weight_shared_blocks))
         self.output = output(hidden_features * 2, out_features)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
