@@ -16,25 +16,30 @@ def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
 
 
 @torch.jit.script
-def conv(inp: torch.Tensor, weight: torch.Tensor, kernel_size: int) -> torch.Tensor:
-    return torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (kernel_size - 1, 0)), weight)
+def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    return torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0)), weight)
 
 
 @torch.jit.script
-def feed_forward(inp: torch.Tensor, weight0: torch.Tensor, weight1: torch.Tensor, kernel_size: int) -> torch.Tensor:
-    return conv(_activate_norm(conv(inp, weight0, kernel_size)), weight1, kernel_size)
+def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor) -> torch.Tensor:
+    inp = conv(inp, w0)
+    inp = _activate_norm(inp)
+    inp = conv(inp, w1)
+    inp = _activate_norm(inp)
+    inp = conv(inp, w2)
+    return inp
 
 
 class FeedForward(torch.nn.Module):
     def __init__(self, hidden_features: int, kernel_size: int, intermediate_factor: float):
         super().__init__()
-        self.kernel_size = kernel_size
         intermediate = int(hidden_features * intermediate_factor)
-        self.w0 = torch.nn.Conv1d(hidden_features, intermediate, (kernel_size,), bias=False).weight
-        self.w1 = torch.nn.Conv1d(intermediate, hidden_features, (kernel_size,), bias=False).weight
+        self.w0 = torch.nn.Conv1d(hidden_features, intermediate, (1,), bias=False).weight
+        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (kernel_size,), bias=False).weight
+        self.w2 = torch.nn.Conv1d(intermediate, hidden_features, (1,), bias=False).weight
 
     def forward(self, inp: torch.Tensor):
-        return feed_forward(inp, self.w0, self.w1, self.kernel_size)
+        return feed_forward(inp, self.w0, self.w1, self.w2)
 
 
 @torch.jit.script
