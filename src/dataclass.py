@@ -6,7 +6,16 @@ import yaml
 
 
 class DataClass:
-    pass
+    def serialize(self):
+        return serialize(self)
+
+
+def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
+    if isinstance(instance, DataClass):
+        attributes = {key: getattr(instance, key) for key in dir(instance)
+                      if not key.startswith('_') and not key.endswith('_')}
+        return serialize({key: value for key, value in attributes.items() if not isinstance(key, typing.Callable)})
+    return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
 
 class Model(DataClass):
@@ -52,12 +61,6 @@ def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
             init_class(attr, config[name])
             continue
         setattr(instance, name, config[name])
-
-
-def serialize(instance: typing.Union[typing.Dict[str, DataClass], DataClass]):
-    if isinstance(instance, DataClass):
-        return serialize(instance.__dict__)
-    return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
 
 class Context(DataClass):
