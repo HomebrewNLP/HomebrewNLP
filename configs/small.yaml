@@ -1,0 +1,6 @@
+model:
+  depth: 256
+optimizer:
+  learning_rate: 0.001
+train:
+  print_interval: 1
