@@ -2,8 +2,10 @@ model:
   depth: 6
   conv_kernel_size: 11
   weight_shared_blocks: 1
+  batch_size: 512
   feed_forward_intermediate_factor: 0.0125
 optimizer:
   learning_rate: 0.001
+  gradient_accumulation_steps: 1
 train:
   print_interval: 64
