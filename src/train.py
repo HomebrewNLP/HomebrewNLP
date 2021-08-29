@@ -50,7 +50,7 @@ def main(ctx: Context):
 
     config = {"train_batch_size": ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps,
               "gradient_accumulation_steps": ctx.optimizer.gradient_accumulation_steps,
-              "optimizer": {"type": "AdamW",
+              "optimizer": {"type": ctx.optimizer.type,
                             "params": {"betas": [0.9, ctx.optimizer.beta2],
                                        "eps": ctx.optimizer.epsilon,
                                        "weight_decay": ctx.optimizer.weight_decay
@@ -111,7 +111,7 @@ def main(ctx: Context):
 
     mean_loss = 0
     curr_loss = 0
-    mod, opt, _, _ = deepspeed.initialize(model=mod, config=config, model_parameters=mod.parameters())
+    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=config, model_parameters=mod.parameters())
 
     while True:
         start_time = time.time()
@@ -122,6 +122,7 @@ def main(ctx: Context):
             mod.backward(lss)
             with torch.no_grad():
                 mod.step()
+                lr_scheduler.step()
                 curr_loss += lss.detach()
                 batch_index += ctx.model.sequence_length
                 if i % ctx.log.loss_steps_per_print == 0:
