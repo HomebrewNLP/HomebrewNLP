@@ -60,7 +60,7 @@ class LinearAttention(torch.nn.Module):
         super(LinearAttention, self).__init__()
 
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2)
-        self.embedding.weight.data.mul_(ctx.model.input_embedding_std)
+        self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(1) + 1
@@ -72,7 +72,8 @@ class LinearAttention(torch.nn.Module):
         feature_embd -= math.log(ctx.dataset.classes / 2 / math.pi)
         feature_embd = torch.exp(feature_embd) + additive
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        self.register_buffer("pos_embd", torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std).unsqueeze(0))
+        feature_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std * 2 ** -0.5).unsqueeze(0)
+        self.register_buffer("pos_embd", feature_embd)
 
         self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(self, ctx, init_scale)
                                                    for _ in range(ctx.model.depth)] * ctx.model.weight_shared_blocks))
