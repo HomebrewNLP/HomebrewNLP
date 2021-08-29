@@ -96,6 +96,7 @@ class LinearAttention(torch.nn.Module):
                                                 coupling_inverse=[momentum_coupling_inverse,
                                                                   revlib.additive_coupling_inverse])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
+        torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
         return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding(inp).transpose(1, 2))), tgt)
