@@ -33,18 +33,6 @@ def parameter_count(net):
     return sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, net.parameters()))
 
 
-def init(module: torch.nn.Module):
-    if hasattr(module, "weight") and hasattr(module.weight, "data"):
-        if "norm" in module.__class__.__name__.lower() or (
-                hasattr(module, "__str__") and "norm" in str(module).lower()):
-            torch.nn.init.uniform_(module.weight.data, 0.998, 1.002)
-        else:
-            # torch.nn.init.constant_(module.weight.data, 0)
-            torch.nn.init.orthogonal_(module.weight.data)
-    if hasattr(module, "bias") and hasattr(module.bias, "data"):
-        torch.nn.init.constant_(module.bias.data, 0)
-
-
 def main(ctx: Context):
     dtype = torch.float16 if ctx.model.float16 else torch.float
 
@@ -92,8 +80,7 @@ def main(ctx: Context):
               }
 
     mod = model.LinearAttention(ctx)
-    mod = mod.to(device=ctx.model.device, dtype=dtype)
-    mod.apply(init)
+    mod = mod.to(dtype=dtype)
     print(mod)
     parameters = parameter_count(mod)
     base = int(math.log10(parameters) / 3)
