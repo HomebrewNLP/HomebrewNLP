@@ -51,6 +51,16 @@ def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tens
     return norm(depth.cumsum(1) / divisor * scale + shift) * init_scale
 
 
+def get_coupling(beta: float):
+    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
+        return other_stream * beta + fn_out * (1 - beta)
+
+    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
+        return (output - fn_out * (1 - beta)) / beta
+
+    return momentum_coupling_forward, momentum_coupling_inverse
+
+
 class LinearAttention(torch.nn.Module):
     """
     One idea would be to run linear attention at every step in an rnn
@@ -75,8 +85,13 @@ class LinearAttention(torch.nn.Module):
         feature_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std * 2 ** -0.5).unsqueeze(0)
         self.register_buffer("pos_embd", feature_embd)
 
-        self.stem = revlib.ReversibleSequential(*([LinearAttentionCell(self, ctx, init_scale)
-                                                   for _ in range(ctx.model.depth)] * ctx.model.weight_shared_blocks))
+        self.stem = revlib.ReversibleSequential(*([layer
+                                                   for _ in range(ctx.model.depth)
+                                                   for layer in [LinearAttentionCell(self, ctx, init_scale),
+                                                                 torch.nn.Identity()]
+                                                   ] * ctx.model.weight_shared_blocks),
+                                                1,
+                                                *get_coupling(ctx.model.momentumnet_beta))
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):

@@ -20,6 +20,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 class Model(DataClass):
     features: int = 256
+    momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
     depth: int = 64
     batch_size: int = 128
     sequence_length: int = 256
