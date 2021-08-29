@@ -1,3 +1,37 @@
+# coding=utf-8
+# Copyright 2021 The Google Research Authors.
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+"""Distributed Shampoo Implementation."""
+# An implementation of distributed Shampoo optimizer from:
+#
+#  Scalable Second Order Optimization for Deep Learning
+#  Rohan Anil, Vineet Gupta, Tomer Koren, Kevin Regan, Yoram Singer
+#  Preprint Paper: https://arxiv.org/abs/2002.09018
+#
+# This implementation moves computation of inverse pth root back to the
+# accelerator (if higher precision is available). We will present the details
+# in an ArXiv note soon.
+#
+# This implementation has been verified to work on ResNet-50 training to 75.9%
+# accuracy which is the MLPerf benchmark at 32K batch size. At the time of
+# writing this comment it achieves this in 1729 steps whereas the best known
+# first order method trains in 2512 steps.
+#
+# Authors: Rohan Anil (rohananil at google dot com)
+#    &     Vineet Gupta (vineet at google dot com)
+#
 import enum
 import itertools
 
