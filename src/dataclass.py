@@ -62,9 +62,12 @@ class OneCycle(DataClass):
 
 
 class Optimizer(DataClass):
-    optimizer_type: str = "Adam"
+    optimizer_type: str = "AdamW"
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
+    beta2: float = 0.9999  # beta1 is controlled by one_cycle
+    epsilon: float = 1e-8
+    weight_decay: float = 0.01
 
 
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):

@@ -50,7 +50,12 @@ def main(ctx: Context):
 
     config = {"train_batch_size": ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps,
               "gradient_accumulation_steps": ctx.optimizer.gradient_accumulation_steps,
-              "optimizer": {"type": "Adam"},
+              "optimizer": {"type": "AdamW",
+                            "params": {"betas": [0.9, ctx.optimizer.beta2],
+                                       "eps": ctx.optimizer.epsilon,
+                                       "weight_decay": ctx.optimizer.weight_decay
+                                       }
+                            },
               "fp16": {"enabled": ctx.model.float16},
               "zero_optimization": {"stage": 3,
                                     "cpu_offload": True,
