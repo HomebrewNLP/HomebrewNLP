@@ -31,7 +31,7 @@ def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torc
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, ctx: Context):
+    def __init__(self, ctx: Context, init_scale: float):
         super().__init__()
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
         self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,), bias=False).weight
@@ -39,7 +39,7 @@ class FeedForward(torch.nn.Module):
         self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features, (1,), bias=False).weight
         torch.nn.init.orthogonal_(self.w0.data, 1 / ctx.model.activation_std)
         torch.nn.init.orthogonal_(self.w1.data, 1 / ctx.model.activation_std)
-        torch.nn.init.orthogonal_(self.w2.data)
+        torch.nn.init.orthogonal_(self.w2.data, init_scale)
 
     def forward(self, inp: torch.Tensor):
         return feed_forward(inp, self.w0, self.w1, self.w2)
@@ -87,9 +87,9 @@ class LinearAttentionCell(torch.nn.Module):
         super(LinearAttentionCell, self).__init__()
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
-        self.depth = FeedForward(ctx)
-        self.scale = FeedForward(ctx)
-        self.shift = FeedForward(ctx)
+        self.depth = FeedForward(ctx, 1)
+        self.scale = FeedForward(ctx, 2 ** -0.5)
+        self.shift = FeedForward(ctx, 2 ** -0.5)
         self.init_scale = init_scale
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
