@@ -23,9 +23,9 @@ def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
 @torch.jit.script
 def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor) -> torch.Tensor:
     inp = conv(inp, w0)
-    inp = _activate_norm(inp)
+    inp = torch.relu(inp)
     inp = conv(inp, w1)
-    inp = _activate_norm(inp)
+    inp = torch.relu(inp)
     inp = conv(inp, w2)
     return inp
 
