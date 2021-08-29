@@ -48,7 +48,7 @@ class FeedForward(torch.nn.Module):
 @torch.jit.script
 def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor,
                      divisor: torch.Tensor, init_scale: float) -> torch.Tensor:
-    return _activate_norm(depth.cumsum(-1) / divisor * scale + shift) * init_scale
+    return norm(depth.cumsum(1) / divisor * scale + shift) * init_scale
 
 
 class LinearAttention(torch.nn.Module):
