@@ -3,7 +3,7 @@ model:
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 4
-  feed_forward_intermediate_factor: 0.0125
+  feed_forward_intermediate_factor: 0.125
 optimizer:
   gradient_accumulation_steps: 1
   one_cycle:
