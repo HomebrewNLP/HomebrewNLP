@@ -2,13 +2,13 @@ model:
   depth: 6
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 512
+  batch_size: 32f
   feed_forward_intermediate_factor: 0.0125
 optimizer:
   gradient_accumulation_steps: 1
   one_cycle:
     cycle_first_step_size: 8192
     cycle_second_step_size: 4096
-    cycle_max_lr: 0.01
-train:
+    cycle_max_lr: 0.002
+log:
   print_interval: 64
