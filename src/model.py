@@ -73,8 +73,8 @@ class LinearAttention(torch.nn.Module):
         self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
-        pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(1) + 1
-        feature_embd = torch.arange(0, ctx.model.features).unsqueeze(0) + 1
+        pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
+        feature_embd = torch.arange(0, ctx.model.features).unsqueeze(1) + 1
         additive = (feature_embd % 2).to(torch.float)
         feature_embd = (feature_embd - additive) / 2
         additive *= math.pi
@@ -85,13 +85,16 @@ class LinearAttention(torch.nn.Module):
         feature_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std * 2 ** -0.5).unsqueeze(0)
         self.register_buffer("pos_embd", feature_embd)
 
+        momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         self.stem = revlib.ReversibleSequential(*([layer
                                                    for _ in range(ctx.model.depth)
                                                    for layer in [LinearAttentionCell(self, ctx, init_scale),
                                                                  torch.nn.Identity()]
                                                    ] * ctx.model.weight_shared_blocks),
-                                                1,
-                                                *get_coupling(ctx.model.momentumnet_beta))
+                                                coupling_forward=[momentum_coupling_forward,
+                                                                  revlib.additive_coupling_forward],
+                                                coupling_inverse=[momentum_coupling_inverse,
+                                                                  revlib.additive_coupling_inverse])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
