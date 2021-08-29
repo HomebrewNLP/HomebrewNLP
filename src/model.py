@@ -10,10 +10,9 @@ QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tenso
 
 
 @torch.jit.script
-def _activate_norm(fn_input: torch.Tensor) -> torch.Tensor:
-    out = torch.nn.functional.relu(fn_input)
+def norm(out: torch.Tensor) -> torch.Tensor:
     out = out - out.mean(1, keepdim=True)
-    return out / ((out.square().sum(1, keepdim=True).sqrt() + 1e-5) * out.size(1) ** -0.5)
+    return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
 
 
 @torch.jit.script
