@@ -5,7 +5,7 @@ import deepspeed
 import numpy as np
 import torch
 
-from src import module
+from src import model
 from src.dataclass import Context
 
 torch._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
@@ -91,7 +91,7 @@ def main(ctx: Context):
                             }
               }
 
-    mod = module.LinearAttention(ctx)
+    mod = model.LinearAttention(ctx)
     mod = mod.to(device=ctx.model.device, dtype=dtype)
     mod.apply(init)
     print(mod)
