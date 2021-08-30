@@ -1,27 +1,21 @@
 import time
 
-import deepspeed
 import torch
 
-from src import model
 from src.dataclass import Context
 from src.dataset import get_dataset
-from src.utils import get_deepspeed_config
+from src.utils import get_model
 
 
 def main(ctx: Context):
     dtype = torch.float16 if ctx.model.float16 else torch.float
-    config = get_deepspeed_config(ctx)
 
-    mod = model.LinearAttention(ctx)
-    mod = mod.to(dtype=dtype)
-
+    mod = get_model(ctx)
     data = get_dataset(ctx)
     length = len(data)
     len_len = len(str(length))
     mean_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
     curr_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
-    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=config, model_parameters=mod.parameters())
 
     while True:
         start_time = time.time()

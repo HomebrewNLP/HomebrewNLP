@@ -1,10 +1,13 @@
 import math
 import random
+import typing
 
+import deepspeed
 import numpy as np
 import torch
 
 from src.dataclass import Context
+from src.model import LinearAttention
 
 
 def setup_torch(seed: int):
@@ -31,10 +34,6 @@ def setup_torch(seed: int):
     random.seed(seed)
     np.seed(seed)
     torch.manual_seed(seed)
-
-
-def parameter_count(net: torch.nn.Module) -> int:
-    return sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, net.parameters()))
 
 
 def get_deepspeed_config(ctx: Context) -> dict:
@@ -83,9 +82,14 @@ def get_deepspeed_config(ctx: Context) -> dict:
             }
 
 
-def model_summary(mod: torch.nn.Module):
+def get_model(ctx: Context) -> typing.Union[torch.nn.Module, torch.optim.Optimizer,
+                                            torch.optim.lr_scheduler._LRScheduler]:
+    mod = LinearAttention(ctx)
+    mod = mod.to(dtype=torch.float16 if ctx.model.float16 else torch.float)
+    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
+                                                     model_parameters=mod.parameters())
     print(mod)
-    parameters = parameter_count(mod)
+    parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)
     print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
-
+    return mod, opt, lr_scheduler
