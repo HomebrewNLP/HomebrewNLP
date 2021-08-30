@@ -54,7 +54,7 @@ class FeedForward(torch.nn.Module):
         torch.nn.init.orthogonal_(self.w0.data, 1 / ctx.model.activation_std)
         torch.nn.init.orthogonal_(self.w1.data, 1 / ctx.model.activation_std)
         torch.nn.init.orthogonal_(self.w2.data, init_scale)
-        self.dropout_probability = ctx.model.dropout_probability
+        self.dropout_probability = 1 - ctx.model.dropout_probability
 
     def forward(self, inp: torch.Tensor):
         return feed_forward(inp, self.w0, self.w1, self.w2, self.dropout_probability, self.training)
