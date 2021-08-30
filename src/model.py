@@ -1,12 +1,24 @@
 import math
 import typing
 
+import numpy as np
 import revlib
 import torch
 import torch.nn.functional
+
 from src.dataclass import Context
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
+
+
+def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter], gain: float):
+    if isinstance(inp, torch.nn.Parameter):
+        inp = inp.data
+    flat_shape = (inp.shape[0], np.prod(inp.shape[1:]))
+    a = torch.rand(flat_shape)
+    u, _, v = torch.linalg.svd(a, full_matrices=False)
+    inp.copy_((u if u.shape == flat_shape else v).reshape(inp.shape).mul(gain).to(device=inp.device, dtype=inp.dtype))
+    return inp
 
 
 @torch.jit.script
@@ -56,9 +68,9 @@ class FeedForward(torch.nn.Module):
         self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,), bias=False).weight
         self.w1 = torch.nn.Conv1d(intermediate, intermediate, (ctx.model.conv_kernel_size,), bias=False).weight
         self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features, (1,), bias=False).weight
-        torch.nn.init.orthogonal_(self.w0.data, 1 / ctx.model.activation_std)
-        torch.nn.init.orthogonal_(self.w1.data, 1 / ctx.model.activation_std)
-        torch.nn.init.orthogonal_(self.w2.data, init_scale)
+        orthonormal(self.w0, 1 / ctx.model.activation_std)
+        orthonormal(self.w1, 1 / ctx.model.activation_std)
+        orthonormal(self.w2, init_scale)
         self.dropout_probability = 1 - ctx.model.dropout_probability
 
     def forward(self, inp: torch.Tensor):
