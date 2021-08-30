@@ -117,8 +117,9 @@ class LinearAttention(torch.nn.Module):
         feature_embd -= math.log(ctx.dataset.classes / 2 / math.pi)
         feature_embd = torch.exp(feature_embd) + additive
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        feature_embd = torch.sin(pos_embd * feature_embd).mul(ctx.model.position_embedding_std * 2 ** -0.5).unsqueeze(0)
+        self.pos_embd_factor = ctx.model.position_embedding_std * 2 ** -0.5
         self.register_buffer("pos_embd", feature_embd)
+        self.register_buffer("feature_embd", feature_embd)
 
         momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         self.stem = revlib.ReversibleSequential(*([layer
@@ -143,6 +144,8 @@ class LinearAttention(torch.nn.Module):
 class LinearAttentionCell(torch.nn.Module):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(LinearAttentionCell, self).__init__()
+        self.pos_embd_factor = lambda: base.pos_embd_factor
+        self.feature_embd = lambda: base.feature_embd
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
         self.depth = FeedForward(ctx, 1)
@@ -165,9 +168,9 @@ class LinearAttentionCell(torch.nn.Module):
         divisor = self.divisor()
         if not self.training:
             if self.caching:
-                pos_embd = pos_embd[self.idx:self.idx + 1]
-                divisor = pos_embd[self.idx:self.idx + 1]
                 self.idx += 1
+                divisor = torch.zeros([], dtype=divisor.dtype, device=divisor.device) + self.idx
+                pos_embd = torch.sin(divisor * self.feature_embd()).mul(self.pos_embd_factor()).view(1, -1, 1)
             else:
                 pos_embd = pos_embd[:inp.size(2)]
                 divisor = pos_embd[:inp.size(2)]
