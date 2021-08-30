@@ -19,7 +19,7 @@ def main(ctx: Context):
 
     while True:
         start_time = time.time()
-        for i, (src, tgt) in enumerate(data):
+        for i, (src, tgt) in enumerate(data, 1):
             lss = mod(src.squeeze(0), tgt.squeeze(0))
             mod.backward(lss)
             with torch.no_grad():
