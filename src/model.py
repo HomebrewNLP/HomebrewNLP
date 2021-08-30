@@ -29,7 +29,7 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float,
         if train:
             mask = torch.randn((features,), device=tmp.device, dtype=tmp.dtype) < p
             inp = torch.masked_select(inp, mask.view(1, -1, 1)).view(batch, -1, sequence)
-            weight = torch.masked_select(weight, mask.view(-1, 1, 1, 1)).view(-1, *weight.size()[1:])
+            weight = torch.masked_select(weight, mask.view(-1, 1, 1, 1)).view(-1, weight.size(1), weight.size(2), weight.size(3))
             return conv(inp, weight)
         return conv(inp, weight) * p
     return conv(inp, weight)
