@@ -1,4 +1,4 @@
-model:
+0model:
   depth: 8
   conv_kernel_size: 11
   weight_shared_blocks: 1
@@ -10,7 +10,9 @@ optimizer:
   one_cycle:
     cycle_first_step_size: 8192
     cycle_second_step_size: 4096
-    cycle_max_lr: 0.002
-    cycle_min_mom: 0.7
+    cycle_min_lr: 0.00015
+    cycle_max_lr: 0.0005
+    cycle_min_mom: 0.85
+    cycle_max_mom: 0.99
 log:
   print_interval: 64
