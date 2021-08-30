@@ -1,11 +1,15 @@
 import torch
 
+from src.dataclass import Context
 from src.utils import encode, decode
 
 
-def complete(model: torch.nn.Module, prompt: str, temperature: float, generated_tokens: int) -> str:
-    inp = encode(prompt)
+def complete(ctx: Context, model: torch.nn.Module, prompt: str, temperature: float, generated_tokens: int) -> str:
+    out = inp = encode(prompt)
+
     for i in range(len(prompt), len(prompt) + generated_tokens):
         new_item = torch.distributions.one_hot_categorical.OneHotCategorica(model(inp)[i] / temperature).sample()
-        inp = torch.cat([inp, new_item], -1)
+        out = torch.cat([out, new_item], -1)
+        inp = new_item if ctx.eval.cache else out
+
     return decode(inp)
