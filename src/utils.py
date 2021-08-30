@@ -1,8 +1,6 @@
 import math
 import random
-import typing
 
-import deepspeed
 import numpy as np
 import torch
 
@@ -82,14 +80,18 @@ def get_deepspeed_config(ctx: Context) -> dict:
             }
 
 
-def get_model(ctx: Context) -> typing.Union[torch.nn.Module, torch.optim.Optimizer,
-                                            torch.optim.lr_scheduler._LRScheduler]:
-    mod = LinearAttention(ctx)
-    mod = mod.to(dtype=torch.float16 if ctx.model.float16 else torch.float)
-    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
-                                                     model_parameters=mod.parameters())
+def get_model(ctx: Context) -> torch.nn.Module:
+    mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
     print(mod)
     parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)
     print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
-    return mod, opt, lr_scheduler
+    return mod
+
+
+def encode(prompt: str) -> torch.LongTensor:
+    return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))
+
+
+def decode(output: torch.LongTensor) -> str:
+    return ''.join(chr(c) for c in output)

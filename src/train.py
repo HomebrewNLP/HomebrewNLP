@@ -1,14 +1,18 @@
 import time
 
+import deepspeed
 import torch
 
 from src.dataclass import Context
 from src.dataset import get_dataset
-from src.utils import get_model
+from src.utils import get_model, get_deepspeed_config
 
 
 def main(ctx: Context):
-    mod, opt, lr_scheduler = get_model(ctx)
+    mod = get_model(ctx)
+    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
+                                                     model_parameters=mod.parameters())
+
     data = get_dataset(ctx)
     length = len(data)
     len_len = len(str(length))

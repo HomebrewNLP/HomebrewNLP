@@ -133,7 +133,10 @@ class LinearAttention(torch.nn.Module):
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
-        return torch.nn.functional.cross_entropy(self.output(self.stem(self.embedding(inp).transpose(1, 2))), tgt)
+        out = self.output(self.stem(self.embedding(inp).transpose(1, 2)))
+        if not self.training:
+            return out
+        return torch.nn.functional.cross_entropy(out, tgt)
 
 
 class LinearAttentionCell(torch.nn.Module):
