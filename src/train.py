@@ -5,6 +5,7 @@ import torch
 
 from src import model
 from src.dataclass import Context
+from src.dataset import get_dataset
 from src.utils import get_deepspeed_config
 
 
@@ -15,32 +16,22 @@ def main(ctx: Context):
     mod = model.LinearAttention(ctx)
     mod = mod.to(dtype=dtype)
 
-    tensor = torch.load(ctx.dataset.file_name)
-    tensor = tensor.long()
-
-    batch_index = torch.arange(0, ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps).view(-1, 1)
-    item_index = torch.arange(0, ctx.model.sequence_length).view(1, -1)
-    batch_index = batch_index + item_index
-
-    length = tensor.size(0) // ctx.model.sequence_length - 1
+    data = get_dataset(ctx)
+    length = len(data)
     len_len = len(str(length))
-
-    mean_loss = 0
-    curr_loss = 0
+    mean_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
+    curr_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
     mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=config, model_parameters=mod.parameters())
 
     while True:
         start_time = time.time()
-        for i in range(1, 1 + length):
-            src = tensor[batch_index].to(ctx.model.device)
-            tgt = tensor[batch_index + 1].to(ctx.model.device)
-            lss = mod(src.to(ctx.model.device), tgt.to(ctx.model.device))
+        for i, (src, tgt) in enumerate(data):
+            lss = mod(src.squeeze(0), tgt.squeeze(0))
             mod.backward(lss)
             with torch.no_grad():
                 mod.step()
                 lr_scheduler.step()
                 curr_loss += lss.detach()
-                batch_index += ctx.model.sequence_length
                 if i % ctx.log.loss_steps_per_print == 0:
                     mean_loss += curr_loss
                     print(f"[{i:{len_len}d}/{length}] Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",

@@ -45,6 +45,10 @@ class Log(DataClass):
 class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
+    shuffle: bool = False
+    num_workers: int = 4
+    pin_memory: bool = False
+    prefetch_factor: int = 2
 
 
 class Offload(DataClass):
