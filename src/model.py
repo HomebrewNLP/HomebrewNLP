@@ -70,9 +70,11 @@ def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tens
 
 
 def get_coupling(beta: float):
+    @torch.jit.script
     def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
         return other_stream * beta + fn_out * (1 - beta)
 
+    @torch.jit.script
     def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
         return (output - fn_out * (1 - beta)) / beta
 
