@@ -46,6 +46,23 @@ class Dataset(DataClass):
     classes: int = 256
 
 
+class Offload(DataClass):
+    device: str = "cpu"
+    pin_memory: bool = True
+
+
+class Zero(DataClass):
+    cpu_offload: bool = True
+    contiguous_gradients: bool = False
+    overlap_comm: bool = True
+    offload_param: Offload = Offload()
+    offload_optimizer: Offload = Offload()
+    stage3_max_live_parameters: float = 1e8
+    stage3_max_reuse_distance: float = 1e7
+    stage3_prefetch_bucket_size: float = 5e7
+    stage3_param_persistence_threshold: float = 1e6
+
+
 class OneCycle(DataClass):
     cycle_min_lr: float = 3e-4  # Base learning rate used at the start and end of cycle.
     cycle_max_lr: float = 1e-3  # Learning rate used in the middle of the cycle. Can be smaller than cycle_min_lr
@@ -70,6 +87,7 @@ class Optimizer(DataClass):
     epsilon: float = 1e-8
     weight_decay: float = 0.01
     gradient_clipping: float = 1.
+    zero: Zero = Zero()
 
 
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
