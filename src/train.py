@@ -10,7 +10,7 @@ from src.utils import get_model
 def main(ctx: Context):
     dtype = torch.float16 if ctx.model.float16 else torch.float
 
-    mod = get_model(ctx)
+    mod, lr_scheduler = get_model(ctx)
     data = get_dataset(ctx)
     length = len(data)
     len_len = len(str(length))

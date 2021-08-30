@@ -82,14 +82,13 @@ def get_deepspeed_config(ctx: Context) -> dict:
             }
 
 
-def get_model(ctx: Context) -> typing.Union[torch.nn.Module, torch.optim.Optimizer,
-                                            torch.optim.lr_scheduler._LRScheduler]:
+def get_model(ctx: Context) -> typing.Union[torch.nn.Module, torch.optim.lr_scheduler._LRScheduler]:
     mod = LinearAttention(ctx)
     mod = mod.to(dtype=torch.float16 if ctx.model.float16 else torch.float)
-    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
-                                                     model_parameters=mod.parameters())
+    mod, _, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
+                                                   model_parameters=mod.parameters())
     print(mod)
     parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)
     print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
-    return mod, opt, lr_scheduler
+    return mod, lr_scheduler
