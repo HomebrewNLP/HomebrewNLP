@@ -32,6 +32,7 @@ class Model(DataClass):
     weight_shared_blocks: int = 1
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
+    dropout_probability: float = 0.75
 
 
 class Log(DataClass):

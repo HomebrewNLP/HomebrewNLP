@@ -21,12 +21,26 @@ def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
 
 
 @torch.jit.script
-def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor) -> torch.Tensor:
+def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float,
+              train: bool) -> torch.Tensor:
+    batch, features, sequence = inp.size()
+    tmp = torch.relu(inp)
+    if 0 < p < 1:
+        if train:
+            mask = torch.randn((features,), device=tmp.device, dtype=tmp.dtype) < p
+            inp = torch.masked_select(inp, mask.view(1, -1, 1)).view(batch, -1, sequence)
+            weight = torch.masked_select(weight, mask.view(-1, 1, 1, 1)).view(-1, *weight.size()[1:])
+            return conv(inp, weight)
+        return conv(inp, weight) * p
+    return conv(inp, weight)
+
+
+@torch.jit.script
+def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor, p: float,
+                 train: bool) -> torch.Tensor:
     inp = conv(inp, w0)
-    inp = torch.relu(inp)
-    inp = conv(inp, w1)
-    inp = torch.relu(inp)
-    inp = conv(inp, w2)
+    inp = drop_conv(inp, w1, p, train)
+    inp = drop_conv(inp, w2, p, train)
     return inp
 
 
@@ -40,9 +54,10 @@ class FeedForward(torch.nn.Module):
         torch.nn.init.orthogonal_(self.w0.data, 1 / ctx.model.activation_std)
         torch.nn.init.orthogonal_(self.w1.data, 1 / ctx.model.activation_std)
         torch.nn.init.orthogonal_(self.w2.data, init_scale)
+        self.dropout_probability = ctx.model.dropout_probability
 
     def forward(self, inp: torch.Tensor):
-        return feed_forward(inp, self.w0, self.w1, self.w2)
+        return feed_forward(inp, self.w0, self.w1, self.w2, self.dropout_probability, self.training)
 
 
 @torch.jit.script
