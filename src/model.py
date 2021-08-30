@@ -78,9 +78,10 @@ class FeedForward(torch.nn.Module):
 
 
 @torch.jit.script
-def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor,
-                     divisor: torch.Tensor, init_scale: float) -> torch.Tensor:
-    return norm(depth.cumsum(1) / divisor * scale + shift) * init_scale
+def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor, divisor: torch.Tensor,
+                     init_scale: float, cache: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    cum = depth.cumsum(1) + cache
+    return cum, norm(cum / divisor * scale + shift) * init_scale
 
 
 def get_coupling(beta: float):
@@ -148,7 +149,35 @@ class LinearAttentionCell(torch.nn.Module):
         self.scale = FeedForward(ctx, 2 ** -0.5)
         self.shift = FeedForward(ctx, 2 ** -0.5)
         self.init_scale = init_scale
+        self._idx: int = 0
+        self.register_buffer("_cumsum_cache", torch.zeros([]))
+        self.register_buffer("_input_cache", torch.zeros([]))
+        self.caching = ctx.eval.cache
+        self.kernel_size = ctx.model.conv_kernel_size
+
+    def reset_cache(self):
+        self._cumsum_cache.mul_(0)
+        self._input_cache.mul_(0)
+        self._idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        out = inp + self.pos_embd()
-        return linear_attention(self.depth(out), self.scale(out), self.shift(out), self.divisor(), self.init_scale)
+        pos_embd = self.pos_embd()
+        divisor = self.divisor()
+        if not self.training:
+            if self.caching:
+                pos_embd = pos_embd[self.idx:self.idx + 1]
+                divisor = pos_embd[self.idx:self.idx + 1]
+                self.idx += 1
+            else:
+                pos_embd = pos_embd[:inp.size(2)]
+                divisor = pos_embd[:inp.size(2)]
+        out = inp + pos_embd
+        if not self.training and self.caching:
+            self._input_cache = out[:, :, -self.kernel_size:]
+            if self.idx - 1 > self.kernel_size:
+                out = torch.cat([self._input_cache, out])
+        cum, out = linear_attention(self.depth(out), self.scale(out), self.shift(out), divisor, self.init_scale,
+                                    self._cumsum_cache)
+        if not self.training and self.caching:
+            self._cumsum_cache = cum[:, :, -self.kernel_size - 1].detach()
+        return out

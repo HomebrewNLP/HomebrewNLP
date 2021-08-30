@@ -95,6 +95,10 @@ class Optimizer(DataClass):
     zero: Zero = Zero()
 
 
+class Eval(DataClass):
+    cache: bool = True
+
+
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
     for name in dir(instance):
         if name.startswith("_") or name.endswith("_") or name not in config:
@@ -112,6 +116,8 @@ class Context(DataClass):
         self.optimizer = Optimizer()
         self.dataset = Dataset()
         self.model = Model()
+        self.eval = Eval()
+
         if len(sys.argv) > 1 and sys.argv[1].endswith('.yaml'):
             with open(sys.argv[1]) as f:
                 cfg = f.read()
