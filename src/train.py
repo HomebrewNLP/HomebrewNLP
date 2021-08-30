@@ -24,7 +24,8 @@ def main(ctx: Context):
     while True:
         start_time = time.time()
         for i, (src, tgt) in enumerate(data, 1):
-            lss = mod(src.squeeze(0), tgt.squeeze(0))
+            lss = mod(src.squeeze(0).to(device=ctx.model.device, non_blocking=True),
+                      tgt.squeeze(0).to(device=ctx.model.device, non_blocking=True))
             mod.backward(lss)
             with torch.no_grad():
                 mod.step()
@@ -34,7 +35,7 @@ def main(ctx: Context):
                     mean_loss += curr_loss
                     rate = i / (time.time() - start_time)
                     print(f"[{i:{len_len}d}/{length}]",
-                          "Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
+                          f"Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
                           f"Mean: {mean_loss.item() / i:7.4f} |",
                           f"LR: {opt.param_groups[0]['lr']:.6f} |",
                           f"Batch/s: {rate:6.3f} -",

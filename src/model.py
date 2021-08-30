@@ -84,16 +84,22 @@ def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tens
     return cum, norm(cum / divisor * scale + shift) * init_scale
 
 
-def get_coupling(beta: float):
+def get_coupling(beta_tmp: float):
     @torch.jit.script
-    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
+    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
         return other_stream * beta + fn_out * (1 - beta)
 
     @torch.jit.script
-    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor) -> torch.Tensor:
+    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
         return (output - fn_out * (1 - beta)) / beta
 
-    return momentum_coupling_forward, momentum_coupling_inverse
+    def _wrapped_momentum_coupling_forward(x, y):
+        return momentum_coupling_forward(x, y, beta_tmp)
+
+    def _wrapped_momentum_coupling_inverse(x, y):
+        return momentum_coupling_inverse(x, y, beta_tmp)
+
+    return _wrapped_momentum_coupling_forward, _wrapped_momentum_coupling_inverse
 
 
 class LinearAttention(torch.nn.Module):

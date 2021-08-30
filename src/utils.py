@@ -30,7 +30,7 @@ def setup_torch(seed: int):
     torch._C._jit_set_nvfuser_enabled(False)
 
     random.seed(seed)
-    np.seed(seed)
+    np.random.seed(seed)
     torch.manual_seed(seed)
 
 
