@@ -17,12 +17,14 @@ def norm(out: torch.Tensor) -> torch.Tensor:
 
 @torch.jit.script
 def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    return torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0)), weight)
+    pad = weight.size()[-1] - 1
+    if pad:
+        inp = torch.nn.functional.pad(inp, (pad, 0))
+    return torch.nn.functional.conv1d(inp, weight)
 
 
 @torch.jit.script
-def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float,
-              train: bool) -> torch.Tensor:
+def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool) -> torch.Tensor:
     batch, features, sequence = inp.size()
     if 0 < p < 1:
         if train:
