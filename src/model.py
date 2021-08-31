@@ -170,7 +170,6 @@ class LinearAttentionCell(torch.nn.Module):
         self._non_persistent_buffers_set.discard("_cumsum_cache")
         self._non_persistent_buffers_set.discard("_input_cache")
 
-
     def reset_cache(self):
         self._cumsum_cache.mul_(0)
         self._input_cache.mul_(0)
