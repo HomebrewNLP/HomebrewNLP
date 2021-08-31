@@ -1,6 +1,7 @@
 import math
 import typing
 
+import deepspeed.moe.layer
 import numpy as np
 import revlib
 import torch
@@ -28,15 +29,15 @@ def norm(out: torch.Tensor) -> torch.Tensor:
 
 
 @torch.jit.script
-def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int) -> torch.Tensor:
     pad = weight.size()[-1] - 1
     if pad:
         inp = torch.nn.functional.pad(inp, (pad, 0))
-    return torch.nn.functional.conv1d(inp, weight)
+    return torch.nn.functional.conv1d(inp, weight, groups=groups)
 
 
 @torch.jit.script
-def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool) -> torch.Tensor:
+def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
     if 0 < p < 1:
         if train:
@@ -47,34 +48,35 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool) ->
             weight = weight * p
         else:
             inp = inp * p
-    return conv(inp, weight)
+    return conv(inp, weight, groups)
 
 
 @torch.jit.script
 def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor, p: float,
-                 train: bool) -> torch.Tensor:
-    inp = drop_conv(inp, w0, p, train)
+                 train: bool, groups: int) -> torch.Tensor:
+    inp = drop_conv(inp, w0, p, train, 1)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w1, p, train)
+    inp = drop_conv(inp, w1, p, train, groups)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w2, p, train)
+    inp = drop_conv(inp, w2, p, train, groups)
     return inp
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, ctx: Context, init_scale: float):
+    def __init__(self, ctx: Context, groups: int):
         super().__init__()
-        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
-        self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,), bias=False).weight
-        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (ctx.model.conv_kernel_size,), bias=False).weight
-        self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features, (1,), bias=False).weight
+        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * groups
+        self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,)).weight
+        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (ctx.model.conv_kernel_size,), groups=groups).weight
+        self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features * groups, (1,), groups=groups).weight
         orthonormal(self.w0, 1 / ctx.model.activation_std)
         orthonormal(self.w1, 1 / ctx.model.activation_std)
-        orthonormal(self.w2, init_scale)
+        orthonormal(self.w2, 1)
         self.dropout_probability = 1 - ctx.model.dropout_probability
+        self.groups = groups
 
     def forward(self, inp: torch.Tensor):
-        return feed_forward(inp, self.w0, self.w1, self.w2, self.dropout_probability, self.training)
+        return feed_forward(inp, self.w0, self.w1, self.w2, self.dropout_probability, self.training, self.groups)
 
 
 @torch.jit.script
@@ -154,15 +156,20 @@ class LinearAttentionCell(torch.nn.Module):
         self.feature_embd = lambda: base.feature_embd
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
-        self.depth = FeedForward(ctx, 1)
-        self.scale = FeedForward(ctx, 2 ** -0.5)
-        self.shift = FeedForward(ctx, 2 ** -0.5)
+        self.groups = 3  # How many
+        self.ff = FeedForward(ctx, self.groups)
         self.init_scale = init_scale
         self._idx: int = 0
-        self.register_buffer("_cumsum_cache", torch.zeros([]))
-        self.register_buffer("_input_cache", torch.zeros([]))
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
+        # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
+        self._input_cache = torch.zeros([])
+        self._cumsum_cache = torch.zeros([])
+        self._buffers["_cumsum_cache"] = self._cumsum_cache
+        self._buffers["_input_cache"] = self._input_cache
+        self._non_persistent_buffers_set.discard("_cumsum_cache")
+        self._non_persistent_buffers_set.discard("_input_cache")
+
 
     def reset_cache(self):
         self._cumsum_cache.mul_(0)
@@ -185,8 +192,8 @@ class LinearAttentionCell(torch.nn.Module):
             self._input_cache = out[:, :, -self.kernel_size:]
             if self.idx - 1 > self.kernel_size:
                 out = torch.cat([self._input_cache, out])
-        cum, out = linear_attention(self.depth(out), self.scale(out), self.shift(out), divisor, self.init_scale,
-                                    self._cumsum_cache)
+        depth, scale, shift = self.ff(out).chunk(self.groups, 1)
+        cum, out = linear_attention(depth, scale, shift, divisor, self.init_scale, self._cumsum_cache)
         if not self.training and self.caching:
             self._cumsum_cache = cum[:, :, -self.kernel_size - 1].detach()
         return out
