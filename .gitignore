@@ -282,3 +282,7 @@ pyvenv.cfg
 pip-selfcheck.json
 
 .idea/
+
+### Project Specific Exclusions
+# Training Data
+out.tensor
