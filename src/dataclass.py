@@ -18,6 +18,14 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
     return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
 
+class MoE(DataClass):
+    num_experts: int = 1
+    capacity_factor: float = 1.0
+    eval_capacity_factor: float = 1.0
+    min_capacity: int = 4
+    noisy_gate_policy: typing.Optional[str] = None  # None or "Jitter" or "RSample"
+
+
 class Model(DataClass):
     features: int = 256
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
@@ -32,6 +40,7 @@ class Model(DataClass):
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
     dropout_probability: float = 0.
+    moe: MoE = MoE()
 
 
 class Log(DataClass):
