@@ -147,6 +147,7 @@ class LinearAttentionCell(torch.nn.Module):
         self._idx: int = 0
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
+        self.groups = 3  # number of splits in ff
         self.dropout_probability = 1 - ctx.model.dropout_probability
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * self.groups
