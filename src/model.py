@@ -23,13 +23,11 @@ def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter], gain: float
     return original_input
 
 
-@torch.jit.script
 def norm(out: torch.Tensor) -> torch.Tensor:
     out = out - out.mean(1, keepdim=True)
     return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
 
 
-@torch.jit.script
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int) -> torch.Tensor:
     pad = weight.size()[-1] - 1
     if pad:
@@ -37,7 +35,6 @@ def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int) -> torch.Tensor:
     return torch.nn.functional.conv1d(inp, weight, groups=groups)
 
 
-@torch.jit.script
 def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
     if 0 < p < 1:
@@ -53,21 +50,26 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, gr
 
 
 @torch.jit.script
-def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor, p: float,
-                 train: bool, groups: int) -> torch.Tensor:
-    inp = drop_conv(inp, w0, p, train, 1)
+def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor,
+                     init_scale: float, cumsum_cache: torch.Tensor, dropout_probability: float, training: bool,
+                     groups: int, caching: bool, input_cache: torch.Tensor,
+                     idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    kernel_size = w1.size(2)
+    if not training and caching:
+        input_cache = inp[:, :, -kernel_size:]
+        if idx - 1 > kernel_size:
+            inp = torch.cat([input_cache, inp])
+    inp = drop_conv(inp, w0, dropout_probability, training, 1)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w1, p, train, groups)
+    inp = drop_conv(inp, w1, dropout_probability, training, groups)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w2, p, train, groups)
-    return inp
-
-
-@torch.jit.script
-def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor, divisor: torch.Tensor,
-                     init_scale: float, cache: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    cum = depth.cumsum(1) + cache
-    return cum, norm(cum / divisor * scale + shift) * init_scale
+    inp = drop_conv(inp, w2, dropout_probability, training, groups)
+    depth, scale, shift = inp.chunk(groups, 1)
+    cum = depth.cumsum(1)
+    if not training and caching:
+        cum = cum + cumsum_cache
+        cumsum_cache = cum[:, :, -kernel_size - 1].detach()
+    return input_cache, cumsum_cache, norm(cum / divisor * scale + shift) * init_scale
 
 
 def get_coupling(beta_tmp: float):
@@ -105,17 +107,7 @@ class LinearAttention(torch.nn.Module):
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
-        feature_embd = torch.arange(0, ctx.model.features).unsqueeze(1) + 1
-        additive = (feature_embd % 2).to(torch.float)
-        feature_embd = (feature_embd - additive) / 2
-        additive *= math.pi
-        feature_embd *= 8 / ctx.model.features
-        feature_embd -= math.log(ctx.dataset.classes / 2 / math.pi)
-        feature_embd = torch.exp(feature_embd) + additive
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
-        self.pos_embd_factor = ctx.model.position_embedding_std * 2 ** -0.5
-        self.register_buffer("pos_embd", feature_embd)
-        self.register_buffer("feature_embd", feature_embd)
 
         momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         self.stem = revlib.ReversibleSequential(*([layer
@@ -139,21 +131,18 @@ class LinearAttention(torch.nn.Module):
 class LinearAttentionCell(torch.nn.Module):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(LinearAttentionCell, self).__init__()
-        self.pos_embd_factor = lambda: base.pos_embd_factor
-        self.feature_embd = lambda: base.feature_embd
-        self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
         self.init_scale = init_scale
-        self._idx: int = 0
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
         self.groups = 3  # number of splits in ff
         self.dropout_probability = 1 - ctx.model.dropout_probability
-        # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * self.groups
         self.w0 = conv_weight(ctx.model.features, intermediate, 1, 1, ctx.model.activation_std)
         self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, 3, ctx.model.activation_std)
         self.w2 = conv_weight(intermediate, ctx.model.features * self.groups, 1, 3, 1)
+        # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
+        self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
         self._buffers["_cumsum_cache"] = self._cumsum_cache
@@ -164,27 +153,13 @@ class LinearAttentionCell(torch.nn.Module):
     def reset_cache(self):
         self._cumsum_cache.mul_(0)
         self._input_cache.mul_(0)
-        self._idx = 0
+        self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        pos_embd = self.pos_embd()
-        divisor = self.divisor()
-        if not self.training:
-            if self.caching:
-                self.idx += 1
-                divisor = torch.zeros([], dtype=divisor.dtype, device=divisor.device) + self.idx
-                pos_embd = torch.sin(divisor * self.feature_embd()).mul(self.pos_embd_factor()).view(1, -1, 1)
-            else:
-                pos_embd = pos_embd[:inp.size(2)]
-                divisor = pos_embd[:inp.size(2)]
-        out = inp + pos_embd
-        if not self.training and self.caching:
-            self._input_cache = out[:, :, -self.kernel_size:]
-            if self.idx - 1 > self.kernel_size:
-                out = torch.cat([self._input_cache, out])
-        out = feed_forward(out, self.w0, self.w1, self.w2, self.dropout_probability, self.training, self.groups)
-        depth, scale, shift = out.chunk(self.groups, 1)
-        cum, out = linear_attention(depth, scale, shift, divisor, self.init_scale, self._cumsum_cache)
-        if not self.training and self.caching:
-            self._cumsum_cache = cum[:, :, -self.kernel_size - 1].detach()
+        self._input_cache, self._cumsum_cache, out = linear_attention(inp, self.divisor(), self.w0, self.w1, self.w2,
+                                                                      self.init_scale, self._cumsum_cache,
+                                                                      self.dropout_probability, self.training,
+                                                                      self.groups, self.caching,
+                                                                      self._input_cache, self.idx)
+        self.idx += 1
         return out
