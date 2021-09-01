@@ -133,8 +133,7 @@ class LinearAttention(torch.nn.Module):
         self.stem = revlib.ReversibleSequential(*([layer
                                                    for _ in range(ctx.model.depth)
                                                    for layer in [LinearAttentionCell(self, ctx, init_scale),
-                                                                 torch.nn.Identity()]
-                                                   ] * ctx.model.weight_shared_blocks),
+                                                                 torch.nn.Identity()]]),
                                                 coupling_forward=[momentum_coupling_forward,
                                                                   revlib.additive_coupling_forward],
                                                 coupling_inverse=[momentum_coupling_inverse,
