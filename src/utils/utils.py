@@ -5,7 +5,7 @@ import torch
 
 from src.dataclass import Context
 from src.model import LinearAttention
-from src.formatting import syntax_print
+from src.utils.formatting import syntax_print
 
 
 def setup_torch(seed: int):

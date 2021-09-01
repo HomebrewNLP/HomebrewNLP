@@ -4,11 +4,11 @@ import torch
 
 from src.dataclass import Context
 from src.dataset import get_dataset
-from src.utils import get_model, get_deepspeed_config
-from src.formatting import pretty_print
+from src.utils.utils import get_model, get_deepspeed_config
+from src.utils.formatting import pretty_print
 
 
-def main(ctx: Context, steps=None):
+def train_model(ctx: Context, steps=None):
     mod = get_model(ctx)
     mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
                                                      model_parameters=mod.parameters())
