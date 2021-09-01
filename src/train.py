@@ -10,8 +10,10 @@ from src.utils import get_model, get_deepspeed_config
 
 def main(ctx: Context):
     mod = get_model(ctx)
-    mod, opt, _, lr_scheduler = deepspeed.initialize(model=mod, config=get_deepspeed_config(ctx),
-                                                     model_parameters=mod.parameters())
+    mod, opt, _, lr_scheduler = deepspeed.initialize(
+        model=mod,
+        config=get_deepspeed_config(ctx),
+        model_parameters=mod.parameters())   # type: ignore
 
     data = get_dataset(ctx)
     length = len(data)

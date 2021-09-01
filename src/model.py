@@ -1,12 +1,12 @@
 import math
 import typing
-
 import numpy as np
 import revlib
 import torch
 import torch.nn.functional
 
 from src.dataclass import Context
+
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
@@ -31,8 +31,8 @@ def norm(out: torch.Tensor) -> torch.Tensor:
 def conv(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     pad = weight.size()[-1] - 1
     if pad:
-        inp = torch.nn.functional.pad(inp, (pad, 0))
-    return torch.nn.functional.conv1d(inp, weight)
+        inp = torch.nn.functional.pad(inp, (pad, 0))   # type: ignore
+    return torch.nn.functional.conv1d(inp, weight)   # type: ignore
 
 
 @torch.jit.script
@@ -144,7 +144,7 @@ class LinearAttention(torch.nn.Module):
         out = self.output(self.stem(self.embedding(inp).transpose(1, 2)))
         if not self.training:
             return out
-        return torch.nn.functional.cross_entropy(out, tgt)
+        return torch.nn.functional.cross_entropy(out, tgt)   # type: ignore
 
 
 class LinearAttentionCell(torch.nn.Module):
@@ -175,17 +175,18 @@ class LinearAttentionCell(torch.nn.Module):
         if not self.training:
             if self.caching:
                 self.idx += 1
-                divisor = torch.zeros([], dtype=divisor.dtype, device=divisor.device) + self.idx
+
+                divisor = torch.zeros([], dtype=divisor.dtype, device=divisor.device) + self.idx   # type: ignore
                 pos_embd = torch.sin(divisor * self.feature_embd()).mul(self.pos_embd_factor()).view(1, -1, 1)
             else:
-                pos_embd = pos_embd[:inp.size(2)]
+                pos_embd = pos_embd[:inp.size(2)]   # type: ignore
                 divisor = pos_embd[:inp.size(2)]
         out = inp + pos_embd
         if not self.training and self.caching:
             self._input_cache = out[:, :, -self.kernel_size:]
             if self.idx - 1 > self.kernel_size:
                 out = torch.cat([self._input_cache, out])
-        cum, out = linear_attention(self.depth(out), self.scale(out), self.shift(out), divisor, self.init_scale,
+        cum, out = linear_attention(self.depth(out), self.scale(out), self.shift(out), divisor, self.init_scale,   # type: ignore
                                     self._cumsum_cache)
         if not self.training and self.caching:
             self._cumsum_cache = cum[:, :, -self.kernel_size - 1].detach()

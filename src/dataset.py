@@ -1,6 +1,7 @@
 import typing
 
 import torch
+from torch.utils.data import Dataset, DataLoader
 
 from src.dataclass import Context
 
@@ -12,7 +13,7 @@ def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> typin
     return dat[:, :-1], dat[:, 1:]
 
 
-class Dataset(torch.utils.data.Dataset):
+class Dataset(Dataset):
     def __init__(self, ctx: Context):
         self.data = torch.load(ctx.dataset.file_name)
         batch_index = torch.arange(0, ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps).view(-1, 1)
@@ -28,11 +29,11 @@ class Dataset(torch.utils.data.Dataset):
         return get_sample(self.data, self.batch_index, idx * self.batch_size)
 
 
-def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
+def get_dataset(ctx: Context) -> DataLoader:
     if ctx.dataset.prefetch_factor < ctx.dataset.shuffle:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
-    return torch.utils.data.DataLoader(Dataset(ctx), 1, ctx.dataset.shuffle,
+    return DataLoader(Dataset(ctx), 1, ctx.dataset.shuffle,
                                        num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
                                        pin_memory=ctx.dataset.pin_memory, prefetch_factor=ctx.dataset.prefetch_factor)

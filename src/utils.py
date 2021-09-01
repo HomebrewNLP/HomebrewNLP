@@ -90,7 +90,7 @@ def get_model(ctx: Context) -> torch.nn.Module:
 
 
 def encode(prompt: str) -> torch.LongTensor:
-    return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))
+    return torch.LongTensor(torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8)))
 
 
 def decode(output: torch.LongTensor) -> str:
