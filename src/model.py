@@ -56,7 +56,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0: torch.Tensor,
                      idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     if not training and caching:
-        input_cache = inp[:, :, -kernel_size:]
+        input_cache = inp[:, :, -kernel_size:].detach()
         if idx - 1 > kernel_size:
             inp = torch.cat([input_cache, inp])
     inp = drop_conv(inp, w0, dropout_probability, training, 1)
