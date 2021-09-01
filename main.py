@@ -4,12 +4,11 @@ from typing import Optional
 import yaml
 
 from src.dataclass import Context
-from src.utils import setup_torch
-from src.formatting import syntax_print
-
-# TODO: make these modules
-from src.train import main
-from src.inference import complete
+from src.utils.utils import setup_torch
+from src.utils.formatting import syntax_print
+from src.utils.preprocess import preprocess_data
+from src.train.train import train_model
+from src.inference.inference import complete
 
 
 def get_context(config_path: Optional[str] = None) -> Context:
@@ -27,12 +26,11 @@ def get_context(config_path: Optional[str] = None) -> Context:
 
 @argh.arg('-i', '--in_path', default='data.txt', help='Path for data to be preprocessed')
 @argh.arg('-o', '--out_path', default='out.tensor', help='Path for data to be preprocessed')
-def preprocess(in_path: Optional[str] = 'data.txt', out_path: Optional[str] = "out.tensor"):
+def preprocess(in_path: str = 'data.txt', out_path: str = "out.tensor"):
     '''
     Processing original data into `out.tensor`
     '''
-    # TODO: Add to CLI.
-    raise NotImplementedError
+    preprocess_data(in_path, out_path)
 
 
 @argh.arg('-c', '--config_path', default='configs/small.yaml', help='Path for the config file')
@@ -46,7 +44,7 @@ def train(config_path: Optional[str] = None):
     dump = yaml.dump(ctx.serialize(), indent=4)
     syntax_print(dump, "yaml", title="Config")
 
-    main(ctx)
+    train_model(ctx)
 
 
 @argh.arg('prompt', help='Input text to the model')
