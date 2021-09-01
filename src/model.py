@@ -13,13 +13,14 @@ QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tenso
 
 
 def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter], gain: float):
+    original_input = inp
     if isinstance(inp, torch.nn.Parameter):
         inp = inp.data
     flat_shape = (inp.shape[0], np.prod(inp.shape[1:]))
     a = torch.rand(flat_shape)
     u, _, v = torch.linalg.svd(a, full_matrices=False)
     inp.copy_((u if u.shape == flat_shape else v).reshape(inp.shape).mul(gain).to(device=inp.device, dtype=inp.dtype))
-    return inp
+    return original_input
 
 
 @torch.jit.script
@@ -62,23 +63,6 @@ def feed_forward(inp: torch.Tensor, w0: torch.Tensor, w1: torch.Tensor, w2: torc
     return inp
 
 
-class FeedForward(torch.nn.Module):
-    def __init__(self, ctx: Context, groups: int):
-        super().__init__()
-        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * groups
-        self.w0 = torch.nn.Conv1d(ctx.model.features, intermediate, (1,)).weight
-        self.w1 = torch.nn.Conv1d(intermediate, intermediate, (ctx.model.conv_kernel_size,), groups=groups).weight
-        self.w2 = torch.nn.Conv1d(intermediate, ctx.model.features * groups, (1,), groups=groups).weight
-        orthonormal(self.w0, 1 / ctx.model.activation_std)
-        orthonormal(self.w1, 1 / ctx.model.activation_std)
-        orthonormal(self.w2, 1)
-        self.dropout_probability = 1 - ctx.model.dropout_probability
-        self.groups = groups
-
-    def forward(self, inp: torch.Tensor):
-        return feed_forward(inp, self.w0, self.w1, self.w2, self.dropout_probability, self.training, self.groups)
-
-
 @torch.jit.script
 def linear_attention(depth: torch.Tensor, scale: torch.Tensor, shift: torch.Tensor, divisor: torch.Tensor,
                      init_scale: float, cache: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
@@ -102,6 +86,10 @@ def get_coupling(beta_tmp: float):
         return momentum_coupling_inverse(x, y, beta_tmp)
 
     return _wrapped_momentum_coupling_forward, _wrapped_momentum_coupling_inverse
+
+
+def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
+    return orthonormal(torch.nn.Conv1d(in_features, out_features, (kernel_size,), groups=groups).weight, 1 / std)
 
 
 class LinearAttention(torch.nn.Module):
@@ -155,13 +143,16 @@ class LinearAttentionCell(torch.nn.Module):
         self.feature_embd = lambda: base.feature_embd
         self.pos_embd = lambda: base.pos_embd
         self.divisor = lambda: base.divisor
-        self.groups = 3  # How many
-        self.ff = FeedForward(ctx, self.groups)
         self.init_scale = init_scale
         self._idx: int = 0
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
+        self.dropout_probability = 1 - ctx.model.dropout_probability
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
+        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * self.groups
+        self.w0 = conv_weight(ctx.model.features, intermediate, 1, 1, ctx.model.activation_std)
+        self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, 3, ctx.model.activation_std)
+        self.w2 = conv_weight(intermediate, ctx.model.features * self.groups, 1, 3, 1)
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
         self._buffers["_cumsum_cache"] = self._cumsum_cache
@@ -190,7 +181,8 @@ class LinearAttentionCell(torch.nn.Module):
             self._input_cache = out[:, :, -self.kernel_size:]
             if self.idx - 1 > self.kernel_size:
                 out = torch.cat([self._input_cache, out])
-        depth, scale, shift = self.ff(out).chunk(self.groups, 1)
+        out = feed_forward(out, self.w0, self.w1, self.w2, self.dropout_probability, self.training, self.groups)
+        depth, scale, shift = out.chunk(self.groups, 1)
         cum, out = linear_attention(depth, scale, shift, divisor, self.init_scale, self._cumsum_cache)
         if not self.training and self.caching:
             self._cumsum_cache = cum[:, :, -self.kernel_size - 1].detach()
