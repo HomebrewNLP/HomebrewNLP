@@ -1,2 +1,4 @@
 revlib>=1.0.10
 deepspeed>=0.5.1
+rich>=10.9.0
+argh >=0.26.2
