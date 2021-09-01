@@ -1,15 +1,18 @@
 import argh
 from pathlib import Path
-import typing
+from typing import Optional
 import yaml
 
 from src.dataclass import Context
-from src.train import main
 from src.utils import setup_torch
 from src.formatting import syntax_print
 
+# TODO: make these modules
+from src.train import main
+from src.inference import complete
 
-def get_context(config_path: typing.Optional[str] = None) -> Context:
+
+def get_context(config_path: Optional[str] = None) -> Context:
     '''
     Loads context from provided config. Otherwise loads default.
     '''
@@ -22,7 +25,9 @@ def get_context(config_path: typing.Optional[str] = None) -> Context:
     return ctx
 
 
-def preprocess():
+@argh.arg('-i', '--in_path', default='data.txt', help='Path for data to be preprocessed')
+@argh.arg('-o', '--out_path', default='out.tensor', help='Path for data to be preprocessed')
+def preprocess(in_path: Optional[str] = 'data.txt', out_path: Optional[str] = "out.tensor"):
     '''
     Processing original data into `out.tensor`
     '''
@@ -31,7 +36,7 @@ def preprocess():
 
 
 @argh.arg('-c', '--config_path', default='configs/small.yaml', help='Path for the config file')
-def train(config_path: typing.Optional[str] = None):
+def train(config_path: Optional[str] = None):
     '''
     Trains a model given the config file.
     '''
@@ -44,12 +49,21 @@ def train(config_path: typing.Optional[str] = None):
     main(ctx)
 
 
-def inference():
-    # def inference(ctx: Context, model: torch.nn.Module, prompt: str, temperature: float, generated_tokens: int) -> str:
+@argh.arg('prompt', help='Input text to the model')
+@argh.arg('-g', '--generated_tokens', default='20', help='Number of tokens to be generated after prompt')
+@argh.arg('-t', '--temp', default='0.7', help='Temperature of the model.\nlower = consistency\nhigher = "creativity"')
+@argh.arg('-c', '--config_path', help='Path for the config file')
+def inference(prompt: str, generated_tokens: int = 20, temp: float = 0.7, config_path: str = None):
     '''
     Runs inference of input data on desired model
     '''
-    # TODO:
+    assert config_path is not None, "Expected Config file!"
+
+    ctx = get_context(config_path)
+
+    # TODO: Load model (pretrained)
+    # complete(ctx, model, prompt, temp, generated_tokens)
+
     raise NotImplementedError
 
 
