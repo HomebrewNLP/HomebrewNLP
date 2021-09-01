@@ -1,7 +1,6 @@
-import sys
-import typing
-
+from pathlib import Path
 import torch
+import typing
 import yaml
 
 
@@ -110,16 +109,16 @@ def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
 
 
 class Context(DataClass):
-    def __init__(self, config: typing.Optional[typing.Dict[str, typing.Any]] = None):
+    def __init__(
+            self, config: typing.Optional[typing.Dict[str, typing.Any]] = None, config_path: typing.Optional[Path] = None):
         self.log = Log()
         self.optimizer = Optimizer()
         self.dataset = Dataset()
         self.model = Model()
         self.eval = Eval()
 
-        if len(sys.argv) > 1 and sys.argv[1].endswith('.yaml'):
-            with open(sys.argv[1]) as f:
-                cfg = f.read()
+        if config_path is not None:
+            cfg = config_path.read_text()
             init_class(self, yaml.safe_load(cfg))
 
         if config is not None:
