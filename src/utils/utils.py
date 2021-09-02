@@ -1,11 +1,11 @@
 import math
-import random
-
 import numpy as np
+import random
 import torch
 
 from src.dataclass import Context
 from src.model import LinearAttention
+from src.utils.formatting import syntax_print
 
 
 def setup_torch(seed: int):
@@ -82,7 +82,9 @@ def get_deepspeed_config(ctx: Context) -> dict:
 
 def get_model(ctx: Context) -> torch.nn.Module:
     mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
-    print(mod)
+
+    syntax_print(str(mod), "python", title="Model")
+
     parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)
     print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
