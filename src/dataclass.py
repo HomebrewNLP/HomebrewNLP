@@ -1,7 +1,7 @@
-from pathlib import Path
 import torch
 import typing
 import yaml
+import pathlib
 
 
 class DataClass:
@@ -109,8 +109,8 @@ def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
 
 
 class Context(DataClass):
-    def __init__(
-            self, config: typing.Optional[typing.Dict[str, typing.Any]] = None, config_path: typing.Optional[Path] = None):
+    def __init__(self, config: typing.Optional[typing.Dict[str, typing.Any]] = None,
+                 config_path: typing.Optional[pathlib.Path] = None):
         self.log = Log()
         self.optimizer = Optimizer()
         self.dataset = Dataset()
