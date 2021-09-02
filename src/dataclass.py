@@ -19,7 +19,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class MoE(DataClass):
-    num_experts: int = 1
+    num_experts: int = 16
     use_in_input: bool = False
     use_in_output: bool = False
 
@@ -69,10 +69,10 @@ class Zero(DataClass):
     overlap_comm: bool = True
     offload_param: Offload = Offload()
     offload_optimizer: Offload = Offload()
-    stage3_max_live_parameters: float = 1e8
-    stage3_max_reuse_distance: float = 1e7
-    stage3_prefetch_bucket_size: float = 5e7
-    stage3_param_persistence_threshold: float = 1e6
+    stage3_max_live_parameters: float = 1
+    stage3_max_reuse_distance: float = 1
+    stage3_prefetch_bucket_size: float = 1
+    stage3_param_persistence_threshold: float = 1
 
 
 class OneCycle(DataClass):
