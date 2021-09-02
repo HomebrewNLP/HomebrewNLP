@@ -8,16 +8,8 @@ from src.dataclass import Context
 from src.dataset import get_dataset
 from src.utils.formatting import pretty_print
 from src.utils.setup import get_model
+from src.model import LinearAttentionCell, ParameterStore
 
-
-def to_device(device: str) -> typing.Callable:
-    def _fn(mod: torch.nn.Module):
-        for name, buffer in mod.named_buffers(recurse=False):
-            mod.register_buffer(name, buffer.to(device))
-        for name, param in mod.named_parameters(recurse=False):
-            mod.register_parameter(name, param.cpu())
-
-    return _fn
 
 
 def clip_gradient(ctx: Context, mod: torch.nn.Module):
@@ -33,10 +25,8 @@ def clip_gradient(ctx: Context, mod: torch.nn.Module):
 
 def train_model(ctx: Context, steps=None):
     mod = get_model(ctx)
-    if ctx.model.offloading:
-        mod = mod.apply(to_device(ctx.model.device))
-    else:
-        mod = mod.to(ctx.model.device)
+    if not ctx.model.offloading:
+        mod = mod.apply(ctx.model.device)
     opt = torch.optim.AdamW(mod.parameters())
     shed = lr_schedules.OneCycle(opt,
                                  ctx.optimizer.one_cycle.cycle_min_lr,

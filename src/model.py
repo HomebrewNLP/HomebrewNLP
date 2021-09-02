@@ -130,12 +130,12 @@ class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
 
-        self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2)
+        self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
         self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
-        self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
+        self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
         momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         cell = LinearAttentionCell(self, ctx, init_scale)
@@ -146,7 +146,7 @@ class LinearAttention(torch.nn.Module):
                                                                   revlib.additive_coupling_forward],
                                                 coupling_inverse=[momentum_coupling_inverse,
                                                                   revlib.additive_coupling_inverse])
-        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
+        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
@@ -228,8 +228,8 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
-        self._buffers["_cumsum_cache"] = self._cumsum_cache
-        self._buffers["_input_cache"] = self._input_cache
+        self._buffers["_cumsum_cache"] = self._cumsum_cache.to(ctx.model.device)
+        self._buffers["_input_cache"] = self._input_cache.to(ctx.model.device)
         self._non_persistent_buffers_set.discard("_cumsum_cache")
         self._non_persistent_buffers_set.discard("_input_cache")
 
