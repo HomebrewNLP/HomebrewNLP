@@ -1,6 +1,6 @@
 import argh
-from pathlib import Path
-from typing import Optional
+import pathlib
+import typing
 import yaml
 
 from src.dataclass import Context
@@ -11,12 +11,12 @@ from src.train.train import train_model
 from src.inference.inference import complete
 
 
-def get_context(config_path: Optional[str] = None) -> Context:
+def get_context(config_path: typing.Optional[str] = None) -> Context:
     '''
     Loads context from provided config. Otherwise loads default.
     '''
     if config_path is not None:
-        config = Path(config_path)
+        config = pathlib.Path(config_path)
         assert config.suffix == '.yaml', 'Expected a .yaml file for config_path'
         ctx = Context(config_path=config)
     else:
@@ -34,7 +34,7 @@ def preprocess(in_path: str = 'data.txt', out_path: str = "out.tensor"):
 
 
 @argh.arg('-c', '--config_path', default='configs/small.yaml', help='Path for the config file')
-def train(config_path: Optional[str] = None):
+def train(config_path: typing.Optional[str] = None):
     '''
     Trains a model given the config file.
     '''
