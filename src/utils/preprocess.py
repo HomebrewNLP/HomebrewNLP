@@ -1,6 +1,5 @@
 import ftfy
 import torch
-from typing import Optional
 
 from src.utils.utils import encode
 
