@@ -51,7 +51,7 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, gr
     return conv(inp, weight, groups)
 
 
-def moe(inp: torch.Tensor, w: typing.List[torch.nn.Parameter],
+def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
         gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     out = torch.nn.functional.conv1d(inp, gate)
     gates = torch.nn.functional.softmax(out, dim=1)
@@ -66,22 +66,31 @@ def moe(inp: torch.Tensor, w: typing.List[torch.nn.Parameter],
     return loss, out.view(batch, sequence, -1).transpose(1, 2)
 
 
+def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], dropout_probability: float,
+              training: bool, groups: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    if w:
+        return moe(inp, w, w_gate)
+    return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
+            drop_conv(inp, w_gate, dropout_probability, training, groups))
+
+
 @torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
-                     w0: typing.List[torch.nn.Parameter], w1: torch.Tensor, w2_gate: torch.Tensor,
-                     w2: typing.List[torch.nn.Parameter], init_scale: float, cumsum_cache: torch.Tensor,
-                     dropout_probability: float, training: bool, groups: int, caching: bool, input_cache: torch.Tensor,
-                     idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+                     w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
+                     w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
+                     init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool, groups: int,
+                     caching: bool, idx: int
+                     ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     if not training and caching:
         input_cache = inp[:, :, -kernel_size:].detach()
         if idx - 1 > kernel_size:
             inp = torch.cat([input_cache, inp])
-    loss0, inp = moe(inp, w0, w0_gate)
+    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w1, dropout_probability, training, groups)
+    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group)
     inp = torch.relu(inp)
-    loss1, inp = moe(inp, w2, w2_gate)
+    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
     depth, scale, shift = inp.chunk(groups, 1)
     cum = depth.cumsum(1)
     if not training and caching:
@@ -183,15 +192,21 @@ class LinearAttentionCell(torch.nn.Module):
         self.kernel_size = ctx.model.conv_kernel_size
         self.groups = 3  # number of splits in ff
         self.dropout_probability = 1 - ctx.model.dropout_probability
-        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * self.groups
-        self.w0_gate = conv_weight(ctx.model.features, ctx.model.moe.num_experts, 1, 1, 1)
+        self.bottleneck_group = ctx.model.bottleneck_group
+        intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
+        experts = ctx.model.moe.num_experts
+        moe_in_output = ctx.model.moe.use_in_output
+        moe_in_input = ctx.model.moe.use_in_input
+        self.w0_gate = conv_weight(ctx.model.features, experts if moe_in_input else intermediate, 1, 1, 1)
         self.w0 = torch.nn.ModuleList([ParameterStore(orthonormal([ctx.model.features, intermediate],
                                                                   ctx.model.activation_std))
-                                       for _ in range(ctx.model.moe.num_experts)])
-        self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, 3, ctx.model.activation_std)
-        self.w2_gate = conv_weight(intermediate, ctx.model.moe.num_experts, 1, 1, 1)
+                                       for _ in range(experts * moe_in_input)])
+        self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
+                              ctx.model.activation_std)
+        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else (ctx.model.features * self.groups), 1,
+                                   1, 1)
         self.w2 = torch.nn.ModuleList([ParameterStore(orthonormal([intermediate, self.groups * ctx.model.features], 1))
-                                       for _ in range(ctx.model.moe.num_experts)])
+                                       for _ in range(experts * moe_in_output)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
         self._input_cache = torch.zeros([])
@@ -211,11 +226,12 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     [store.param for store in self.w0],
                                                                                     self.w1, self.w2_gate,
                                                                                     [store.param for store in self.w2],
-                                                                                    self.init_scale, self._cumsum_cache,
+                                                                                    self._input_cache,
+                                                                                    self._cumsum_cache, self.init_scale,
+                                                                                    self.bottleneck_group,
                                                                                     self.dropout_probability,
                                                                                     self.training, self.groups,
-                                                                                    self.caching, self._input_cache,
-                                                                                    self.idx)
+                                                                                    self.caching, self.idx)
         AuxLoss.apply(loss0 + loss1)
         self.idx += 1
         return out

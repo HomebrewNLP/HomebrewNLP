@@ -19,11 +19,9 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class MoE(DataClass):
-    num_experts: int = 4
-    capacity_factor: float = 1.0
-    eval_capacity_factor: float = 1.0
-    min_capacity: int = 4
-    noisy_gate_policy: typing.Optional[str] = None  # None or "Jitter" or "RSample"
+    num_experts: int = 1
+    use_in_input: bool = False
+    use_in_output: bool = False
 
 
 class Model(DataClass):
@@ -40,6 +38,7 @@ class Model(DataClass):
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
     dropout_probability: float = 0.
+    bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
     moe: MoE = MoE()
 
 
