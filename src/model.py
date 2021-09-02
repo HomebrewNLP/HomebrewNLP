@@ -10,14 +10,18 @@ from src.dataclass import Context
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
-def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter], gain: float):
+def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter, typing.List[int]], gain: float):
     original_input = inp
+    if isinstance(inp, list):
+        inp = torch.zeros(inp)
     if isinstance(inp, torch.nn.Parameter):
         inp = inp.data
     flat_shape = (inp.shape[0], np.prod(inp.shape[1:]))
     a = torch.rand(flat_shape)
     u, _, v = torch.linalg.svd(a, full_matrices=False)
     inp.copy_((u if u.shape == flat_shape else v).reshape(inp.shape).mul(gain).to(device=inp.device, dtype=inp.dtype))
+    if isinstance(original_input, list):
+        return torch.nn.Parameter(inp)
     return original_input
 
 
@@ -47,32 +51,26 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, gr
     return conv(inp, weight, groups)
 
 
-class MoEGate(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, one_hot: torch.Tensor, w: torch.Tensor, inp: torch.Tensor):
-        ctx.save_for_backward(one_hot, w, inp)
-        return torch.einsum("bse,eio,bis->bos", one_hot, w, inp)
-
-    @staticmethod
-    def backward(ctx, grad_output):
-        one_hot, w, inp = ctx.saved_tensors
-        return (None,) + torch.autograd.grad(torch.einsum("bse,eio,bis->bos", one_hot, w, inp), (w, inp), grad_output)
-
-
-def moe(inp: torch.Tensor, w: torch.Tensor, gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+def moe(inp: torch.Tensor, w: typing.List[torch.nn.Parameter],
+        gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     out = torch.nn.functional.conv1d(inp, gate)
     gates = torch.nn.functional.softmax(out, dim=1)
-    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1]).float()
-    loss = torch.sum(torch.mean(gates, dim=(0, 2)) * torch.mean(one_hot, dim=(0, 1)))
-    print(one_hot.size(), w.size(), inp.size())
-    return loss, MoEGate.apply(one_hot, w, inp)
+    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1]).to(dtype=torch.bool)
+    inp_t = inp.transpose(1, 2)
+    batch, features, sequence = inp.size()
+    out = torch.empty((batch * sequence, w[0].size(1)), device=inp.device, dtype=inp.dtype)
+    for expert, param in zip(one_hot.unbind(-1), w):
+        tmp = torch.masked_select(inp_t, expert.unsqueeze(2)).view(-1, features).mm(param)
+        out = out.masked_scatter(expert.view(-1, 1), tmp)
+    loss = torch.sum(torch.mean(gates, dim=(0, 2)) * torch.mean(one_hot.float(), dim=(0, 1)))
+    return loss, out.view(batch, sequence, -1).transpose(1, 2)
 
 
-# @torch.jit.script
-def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor, w0: torch.Tensor,
-                     w1: torch.Tensor, w2_gate: torch.Tensor, w2: torch.Tensor, init_scale: float,
-                     cumsum_cache: torch.Tensor, dropout_probability: float, training: bool, groups: int,
-                     caching: bool, input_cache: torch.Tensor,
+@torch.jit.script
+def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
+                     w0: typing.List[torch.nn.Parameter], w1: torch.Tensor, w2_gate: torch.Tensor,
+                     w2: typing.List[torch.nn.Parameter], init_scale: float, cumsum_cache: torch.Tensor,
+                     dropout_probability: float, training: bool, groups: int, caching: bool, input_cache: torch.Tensor,
                      idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     if not training and caching:
@@ -161,6 +159,21 @@ class AuxLoss(torch.autograd.Function):
         return None
 
 
+class ParameterStore(torch.nn.Module):
+    """
+    Something (likely deepspeed) changes all parameters in a ParameterList to [1] even though standalone parameters
+    work. That's why a torch.nn.ModuleList of ParameterStores needs to be initialized.
+    """
+
+    def __init__(self, param: torch.Tensor):
+        super(ParameterStore, self).__init__()
+        self.param = torch.nn.Parameter(param)
+
+    def __repr__(self):
+        return (f'{self.__class__.__name__}(shape={str(list(self.param.size()))}, device={self.param.device}, '
+                f'dtype={self.param.dtype})')
+
+
 class LinearAttentionCell(torch.nn.Module):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(LinearAttentionCell, self).__init__()
@@ -172,15 +185,13 @@ class LinearAttentionCell(torch.nn.Module):
         self.dropout_probability = 1 - ctx.model.dropout_probability
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor) * self.groups
         self.w0_gate = conv_weight(ctx.model.features, ctx.model.moe.num_experts, 1, 1, 1)
-        self.w0 = torch.nn.Parameter(torch.stack([orthonormal(torch.randn((ctx.model.features, intermediate)),
-                                                              ctx.model.activation_std)
-                                                  for _ in range(ctx.model.moe.num_experts)], 0))
+        self.w0 = torch.nn.ModuleList([ParameterStore(orthonormal([ctx.model.features, intermediate],
+                                                                  ctx.model.activation_std))
+                                       for _ in range(ctx.model.moe.num_experts)])
         self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, 3, ctx.model.activation_std)
         self.w2_gate = conv_weight(intermediate, ctx.model.moe.num_experts, 1, 1, 1)
-        self.w2 = torch.nn.Parameter(torch.stack([orthonormal(torch.randn((intermediate,
-                                                                           self.groups * ctx.model.features)),
-                                                              ctx.model.activation_std)
-                                                  for _ in range(ctx.model.moe.num_experts)], 0))
+        self.w2 = torch.nn.ModuleList([ParameterStore(orthonormal([intermediate, self.groups * ctx.model.features], 1))
+                                       for _ in range(ctx.model.moe.num_experts)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
         self._input_cache = torch.zeros([])
@@ -197,13 +208,14 @@ class LinearAttentionCell(torch.nn.Module):
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp, self.divisor(), self.w0_gate,
-                                                                                    self.w0, self.w1, self.w2_gate,
-                                                                                    self.w2, self.init_scale,
-                                                                                    self._cumsum_cache,
+                                                                                    [store.param for store in self.w0],
+                                                                                    self.w1, self.w2_gate,
+                                                                                    [store.param for store in self.w2],
+                                                                                    self.init_scale, self._cumsum_cache,
                                                                                     self.dropout_probability,
-                                                                                    self.training,
-                                                                                    self.groups, self.caching,
-                                                                                    self._input_cache, self.idx)
-        # AuxLoss.apply(loss0 + loss1)
+                                                                                    self.training, self.groups,
+                                                                                    self.caching, self._input_cache,
+                                                                                    self.idx)
+        AuxLoss.apply(loss0 + loss1)
         self.idx += 1
         return out

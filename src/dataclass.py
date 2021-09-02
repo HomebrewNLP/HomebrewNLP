@@ -19,7 +19,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class MoE(DataClass):
-    num_experts: int = 1
+    num_experts: int = 4
     capacity_factor: float = 1.0
     eval_capacity_factor: float = 1.0
     min_capacity: int = 4
