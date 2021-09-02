@@ -6,7 +6,7 @@ import torch
 from src.dataclass import Context
 from src.dataset import get_dataset
 from src.utils.formatting import pretty_print
-from src.utils.torch import get_model, get_deepspeed_config
+from src.utils.setup import get_model, get_deepspeed_config
 
 
 def train_model(ctx: Context, steps=None):

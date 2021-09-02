@@ -1,7 +1,7 @@
 import ftfy
 
 import torch
-from src.utils.torch import encode
+from src.utils.setup import encode
 
 
 def preprocess_data(in_path: str, out_path: str):

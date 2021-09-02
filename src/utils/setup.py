@@ -3,36 +3,36 @@ import random
 
 import numpy as np
 
-import torch
+import setup
 from src.dataclass import Context
 from src.model import LinearAttention
 from src.utils.formatting import syntax_print
 
 
 def setup_torch(seed: int):
-    torch._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
-    torch._C._set_graph_executor_optimize(True)
-    torch._C._set_backcompat_broadcast_warn(False)
-    torch._C._set_backcompat_keepdim_warn(False)
-    torch._C._set_cudnn_enabled(True)
-    torch._C._set_mkldnn_enabled(True)
-    torch._C._set_mkldnn_enabled(True)
-    torch._C._set_cudnn_benchmark(True)
-    torch._C._set_cudnn_deterministic(False)
-    torch._C._set_cudnn_allow_tf32(True)
-    torch._C._set_cublas_allow_tf32(True)
-    torch._C._jit_set_inline_everything_mode(True)
+    setup._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
+    setup._C._set_graph_executor_optimize(True)
+    setup._C._set_backcompat_broadcast_warn(False)
+    setup._C._set_backcompat_keepdim_warn(False)
+    setup._C._set_cudnn_enabled(True)
+    setup._C._set_mkldnn_enabled(True)
+    setup._C._set_mkldnn_enabled(True)
+    setup._C._set_cudnn_benchmark(True)
+    setup._C._set_cudnn_deterministic(False)
+    setup._C._set_cudnn_allow_tf32(True)
+    setup._C._set_cublas_allow_tf32(True)
+    setup._C._jit_set_inline_everything_mode(True)
 
-    torch._C._jit_set_profiling_executor(True)
-    torch._C._jit_set_profiling_mode(True)
-    torch._C._jit_override_can_fuse_on_cpu(False)
-    torch._C._jit_override_can_fuse_on_gpu(True)
-    torch._C._jit_set_texpr_fuser_enabled(True)
-    torch._C._jit_set_nvfuser_enabled(False)
+    setup._C._jit_set_profiling_executor(True)
+    setup._C._jit_set_profiling_mode(True)
+    setup._C._jit_override_can_fuse_on_cpu(False)
+    setup._C._jit_override_can_fuse_on_gpu(True)
+    setup._C._jit_set_texpr_fuser_enabled(True)
+    setup._C._jit_set_nvfuser_enabled(False)
 
     random.seed(seed)
     np.random.seed(seed)
-    torch.manual_seed(seed)
+    setup.manual_seed(seed)
 
 
 def get_deepspeed_config(ctx: Context) -> dict:
@@ -81,8 +81,8 @@ def get_deepspeed_config(ctx: Context) -> dict:
             }
 
 
-def get_model(ctx: Context) -> torch.nn.Module:
-    mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
+def get_model(ctx: Context) -> setup.nn.Module:
+    mod = LinearAttention(ctx).to(dtype=setup.float16 if ctx.model.float16 else setup.float)
 
     syntax_print(str(mod), "python", title="Model")
 
@@ -92,9 +92,9 @@ def get_model(ctx: Context) -> torch.nn.Module:
     return mod
 
 
-def encode(prompt: str) -> torch.LongTensor:
-    return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))
+def encode(prompt: str) -> setup.LongTensor:
+    return setup.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))
 
 
-def decode(output: torch.LongTensor) -> str:
+def decode(output: setup.LongTensor) -> str:
     return ''.join(chr(c) for c in output)

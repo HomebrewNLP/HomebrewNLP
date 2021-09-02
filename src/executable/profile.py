@@ -1,7 +1,7 @@
 import torch
 
 from src.dataclass import Context
-from src.train import train_model
+from src.executable.train import train_model
 
 
 def main(ctx: Context, chrome_trace_path: str = "torch_trace", steps: int = 128):

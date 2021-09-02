@@ -1,7 +1,7 @@
 import torch
 
 from src.dataclass import Context
-from src.utils.torch import encode, decode
+from src.utils.setup import encode, decode
 
 
 def complete(ctx: Context, model: torch.nn.Module, prompt: str, temperature: float, generated_tokens: int) -> str:
