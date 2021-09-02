@@ -19,11 +19,9 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class MoE(DataClass):
-    top_k: int = 1  # Increasing the number of experts per forward pass doesn't increase quality too much
-    gate: str = "SwitchGate"  # "SwitchGate", "NoisyGate", "GShardGate", "NaiveGate"
     num_experts: int = 1
-    capacity_factor: float = 1.0  # only for "GShardGate" and "SwitchGate"
-    eval_capacity_factor: float = 1.0  # only for "GShardGate" and "SwitchGate"
+    capacity_factor: float = 1.0
+    eval_capacity_factor: float = 1.0
     min_capacity: int = 4
     noisy_gate_policy: typing.Optional[str] = None  # None or "Jitter" or "RSample"
 
