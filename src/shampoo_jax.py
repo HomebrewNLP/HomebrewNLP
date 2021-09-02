@@ -35,7 +35,6 @@
 import enum
 import itertools
 
-import jax
 import jax.numpy as jnp
 import numpy as onp
 from flax import struct

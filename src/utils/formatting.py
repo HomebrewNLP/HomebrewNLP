@@ -1,9 +1,9 @@
+from typing import Optional
+
 from rich import print
 from rich.console import Console
 from rich.syntax import Syntax
-from typing import Optional
 from rich.traceback import install
-
 
 # Color coded tracebacks
 install(show_locals=False, extra_lines=0)

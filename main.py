@@ -4,11 +4,10 @@ import typing
 import yaml
 
 from src.dataclass import Context
-from src.utils.utils import setup_torch
+from src.utils.torch import setup_torch
 from src.utils.formatting import syntax_print
 from src.utils.preprocess import preprocess_data
-from src.train.train import train_model
-from src.inference.inference import complete
+from src.train import train_model
 
 
 def get_context(config_path: typing.Optional[str] = None) -> Context:
