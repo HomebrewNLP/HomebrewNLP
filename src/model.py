@@ -1,3 +1,4 @@
+import copy
 import typing
 
 import numpy as np
@@ -137,10 +138,10 @@ class LinearAttention(torch.nn.Module):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
 
         momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
+        cell = LinearAttentionCell(self, ctx, init_scale)
         self.stem = revlib.ReversibleSequential(*([layer
                                                    for _ in range(ctx.model.depth)
-                                                   for layer in [LinearAttentionCell(self, ctx, init_scale),
-                                                                 torch.nn.Identity()]]),
+                                                   for layer in [copy.deepcopy(cell), torch.nn.Identity()]]),
                                                 coupling_forward=[momentum_coupling_forward,
                                                                   revlib.additive_coupling_forward],
                                                 coupling_inverse=[momentum_coupling_inverse,
@@ -197,16 +198,15 @@ class LinearAttentionCell(torch.nn.Module):
         experts = ctx.model.moe.num_experts
         moe_in_output = ctx.model.moe.use_in_output
         moe_in_input = ctx.model.moe.use_in_input
+        param0 = ParameterStore(orthonormal([ctx.model.features, intermediate], ctx.model.activation_std))
+        param2 = ParameterStore(orthonormal([intermediate, self.groups * ctx.model.features], 1))
         self.w0_gate = conv_weight(ctx.model.features, experts if moe_in_input else intermediate, 1, 1, 1)
-        self.w0 = torch.nn.ModuleList([ParameterStore(orthonormal([ctx.model.features, intermediate],
-                                                                  ctx.model.activation_std))
-                                       for _ in range(experts * moe_in_input)])
+        self.w0 = torch.nn.ModuleList([copy.deepcopy(param0) for _ in range(experts * moe_in_input)])
         self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
         self.w2_gate = conv_weight(intermediate, experts if moe_in_output else (ctx.model.features * self.groups), 1,
                                    1, 1)
-        self.w2 = torch.nn.ModuleList([ParameterStore(orthonormal([intermediate, self.groups * ctx.model.features], 1))
-                                       for _ in range(experts * moe_in_output)])
+        self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
         self._input_cache = torch.zeros([])
