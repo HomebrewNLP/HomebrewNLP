@@ -32,13 +32,12 @@ def train_model(ctx: Context, steps=None):
             if i % ctx.log.loss_steps_per_print == 0:
                 mean_loss += curr_loss
                 rate = i / (time.time() - start_time)
-                pretty_print(
-                    f"[{i:{len_len}d}/{length}]",
-                    f"Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
-                    f"Mean: {mean_loss.item() / i:7.4f} |",
-                    f"LR: {opt.param_groups[0]['lr']:.6f} |",
-                    f"Batch/s: {rate:6.3f} -",
-                    f"Tokens/day: {3600 * 24 * rate * ctx.model.batch_size * ctx.model.sequence_length:11,.0f}")
+                pretty_print(f"[{i:{len_len}d}/{length}]",
+                             f"Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
+                             f"Mean: {mean_loss.item() / i:7.4f} |",
+                             f"LR: {opt.param_groups[0]['lr']:.6f} |",
+                             f"Batch/s: {rate:6.3f} -",
+                             f"Tokens/day: {3600 * 24 * rate * ctx.model.batch_size * ctx.model.sequence_length:11,.0f}")
                 curr_loss = 0
         if steps is not None and i > steps:
             return
