@@ -17,6 +17,12 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
     return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
 
+class MoE(DataClass):
+    num_experts: int = 16
+    use_in_input: bool = False
+    use_in_output: bool = False
+
+
 class Model(DataClass):
     features: int = 256
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
@@ -31,6 +37,8 @@ class Model(DataClass):
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
     dropout_probability: float = 0.
+    bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
+    moe: MoE = MoE()
 
 
 class Log(DataClass):
@@ -60,10 +68,10 @@ class Zero(DataClass):
     overlap_comm: bool = True
     offload_param: Offload = Offload()
     offload_optimizer: Offload = Offload()
-    stage3_max_live_parameters: float = 1e8
-    stage3_max_reuse_distance: float = 1e7
-    stage3_prefetch_bucket_size: float = 5e7
-    stage3_param_persistence_threshold: float = 1e6
+    stage3_max_live_parameters: float = 1
+    stage3_max_reuse_distance: float = 1
+    stage3_prefetch_bucket_size: float = 1
+    stage3_param_persistence_threshold: float = 1
 
 
 class OneCycle(DataClass):
