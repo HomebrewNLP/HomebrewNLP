@@ -1,21 +1,57 @@
 import time
+import typing
 
-import deepspeed
 import torch
+from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
 from src.dataset import get_dataset
 from src.utils.formatting import pretty_print
-from src.utils.setup import get_model, get_deepspeed_config
+from src.utils.setup import get_model
+
+
+def to_device(device: str) -> typing.Callable:
+    def _fn(mod: torch.nn.Module):
+        for name, buffer in mod.named_buffers(recurse=False):
+            mod.register_buffer(name, buffer.to(device))
+        for name, param in mod.named_parameters(recurse=False):
+            mod.register_parameter(name, param.cpu())
+
+    return _fn
+
+
+def clip_gradient(ctx: Context, mod: torch.nn.Module):
+    for p in mod.parameters():
+        if p.grad is None:
+            continue
+
+        g_norm = p.grad.norm(2, min(p.ndim - 1, 1), True).clamp(min=ctx.optimizer.agc.zero_division_eps)
+        p_norm = p.norm(2, min(p.ndim - 1, 1), True).clamp(min=ctx.optimizer.agc.eps)
+        grad_scale = (p_norm / g_norm * ctx.optimizer.agc.gradient_clipping).clamp(max=1)
+        p.grad.data.copy_(p.grad * grad_scale)
 
 
 def train_model(ctx: Context, steps=None):
     mod = get_model(ctx)
-    engine = deepspeed.DeepSpeedEngine(None,
-                                       mod,
-                                       model_parameters=mod.parameters(),
-                                       config=get_deepspeed_config(ctx),
-                                       dont_change_device=True)
+    if ctx.model.offloading:
+        mod = mod.apply(to_device(ctx.model.device))
+    else:
+        mod = mod.to(ctx.model.device)
+    opt = torch.optim.AdamW(mod.parameters())
+    shed = lr_schedules.OneCycle(opt,
+                                 ctx.optimizer.one_cycle.cycle_min_lr,
+                                 ctx.optimizer.one_cycle.cycle_max_lr,
+                                 ctx.optimizer.one_cycle.decay_lr_rate,
+                                 ctx.optimizer.one_cycle.cycle_first_step_size,
+                                 ctx.optimizer.one_cycle.cycle_second_step_size,
+                                 ctx.optimizer.one_cycle.cycle_first_stair_count,
+                                 ctx.optimizer.one_cycle.cycle_second_stair_count,
+                                 ctx.optimizer.one_cycle.decay_step_size,
+                                 ctx.optimizer.one_cycle.cycle_momentum,
+                                 ctx.optimizer.one_cycle.cycle_min_mom,
+                                 ctx.optimizer.one_cycle.cycle_max_mom,
+                                 ctx.optimizer.one_cycle.decay_mom_rate,
+                                 ctx.optimizer.one_cycle.last_batch_iteration)
     data = get_dataset(ctx)
     length = len(data)
     len_len = len(str(length))
@@ -23,14 +59,17 @@ def train_model(ctx: Context, steps=None):
     dtype = torch.float16 if ctx.model.float16 else torch.float
     mean_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
     curr_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
+
     start_time = time.time()
     for i, (src, tgt) in enumerate(data, 1):
-        lss = engine(src.squeeze(0).to(device=ctx.model.device, non_blocking=True),
-                     tgt.squeeze(0).to(device=ctx.model.device, non_blocking=True))
-        engine.backward(lss)
+        lss = mod(src.squeeze(0).to(device=ctx.model.device, non_blocking=True),
+                  tgt.squeeze(0).to(device=ctx.model.device, non_blocking=True))
+        lss.backward()
         with torch.no_grad():
-            engine.step()
-            engine.lr_scheduler.step()
+            clip_gradient(ctx, mod)
+            opt.step()
+            opt.zero_grad()
+            shed.step()
             curr_loss += lss.detach()
             if i % ctx.log.loss_steps_per_print == 0:
                 mean_loss += curr_loss
@@ -39,7 +78,7 @@ def train_model(ctx: Context, steps=None):
                     (f"[{i:{len_len}d}/{length}]",
                      f"Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
                      f"Mean: {mean_loss.item() / i:7.4f} |",
-                     f"LR: {engine.optimizer.param_groups[0]['lr']:.6f} |",
+                     f"LR: {opt.param_groups[0]['lr']:.6f} |",
                      f"Batch/s: {rate:6.3f} -",
                      f"Tokens/day: {3600 * 24 * rate * ctx.model.batch_size * ctx.model.sequence_length:11,.0f}")
                 curr_loss = 0

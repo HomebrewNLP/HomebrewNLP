@@ -1,9 +1,15 @@
 model:
+  print_on_init: false
   depth: 256
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 4
   feed_forward_intermediate_factor: 0.125
+  features: 512
+  moe:
+    use_in_input: false
+    use_in_output: true
+    num_experts: 64
 optimizer:
   gradient_accumulation_steps: 1
   one_cycle:

@@ -25,6 +25,7 @@ class MoE(DataClass):
 
 
 class Model(DataClass):
+    print_on_init: bool = True
     features: int = 256
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
     depth: int = 64
@@ -40,6 +41,7 @@ class Model(DataClass):
     dropout_probability: float = 0.
     bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
     moe: MoE = MoE()
+    offloading: bool = False
 
 
 class Log(DataClass):
@@ -91,6 +93,12 @@ class OneCycle(DataClass):
     last_batch_iteration: int = -1  # The index of the last batch. This parameter is used when resuming a training job.
 
 
+class AdaptiveGradientClipping(DataClass):
+    gradient_clipping: float = 0.01
+    zero_division_eps: float = 1e-6
+    eps: float = 1e-3
+
+
 class Optimizer(DataClass):
     type: str = "AdamW"
     gradient_accumulation_steps: int = 1
@@ -100,6 +108,7 @@ class Optimizer(DataClass):
     weight_decay: float = 0.01
     gradient_clipping: float = 1.
     zero: Zero = Zero()
+    agc = AdaptiveGradientClipping()
 
 
 class Eval(DataClass):

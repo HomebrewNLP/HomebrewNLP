@@ -169,6 +169,20 @@ class AuxLoss(torch.autograd.Function):
         return None
 
 
+class TensorOffload(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inp: torch.Tensor, reference: torch.Tensor):
+        ctx.device = inp.device
+        return inp.to(device=reference.device, non_blocking=True)
+
+    @staticmethod
+    def backward(ctx, grad_outputs: torch.Tensor):
+        return grad_outputs.to(ctx.device, non_blocking=True), None
+
+
+offload = TensorOffload.apply
+
+
 class ParameterStore(torch.nn.Module):
     """
     Something (likely deepspeed) changes all parameters in a ParameterList to [1] even though standalone parameters
@@ -182,6 +196,9 @@ class ParameterStore(torch.nn.Module):
     def __repr__(self):
         return (f'{self.__class__.__name__}(shape={str(list(self.param.size()))}, device={self.param.device}, '
                 f'dtype={self.param.dtype})')
+
+    def __call__(self, reference: torch.Tensor):
+        return offload(self.param, reference)
 
 
 class LinearAttentionCell(torch.nn.Module):
@@ -222,12 +239,16 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp, self.divisor(), self.w0_gate,
-                                                                                    [store.param for store in self.w0],
-                                                                                    self.w1, self.w2_gate,
-                                                                                    [store.param for store in self.w2],
+        loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
+                                                                                    self.divisor(),
+                                                                                    offload(self.w0_gate, inp),
+                                                                                    [store(inp) for store in self.w0],
+                                                                                    offload(self.w1, inp),
+                                                                                    offload(self.w2_gate, inp),
+                                                                                    [store(inp) for store in self.w2],
                                                                                     self._input_cache,
-                                                                                    self._cumsum_cache, self.init_scale,
+                                                                                    self._cumsum_cache,
+                                                                                    self.init_scale,
                                                                                     self.bottleneck_group,
                                                                                     self.dropout_probability,
                                                                                     self.training, self.groups,

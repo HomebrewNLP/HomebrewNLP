@@ -6,7 +6,7 @@ from rich.syntax import Syntax
 from rich.traceback import install
 
 # Color coded tracebacks
-install(show_locals=False, extra_lines=0)
+# install(show_locals=False, extra_lines=0)
 console = Console()
 
 
