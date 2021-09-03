@@ -155,6 +155,12 @@ class LinearAttention(torch.nn.Module):
             return out
         return torch.nn.functional.cross_entropy(out, tgt)
 
+    def save(self):
+        torch.save(self.state_dict(), self.path)
+
+    def load(self):
+        self.load_state_dict(torch.load(self.path))
+
 
 class AuxLoss(torch.autograd.Function):
     @staticmethod

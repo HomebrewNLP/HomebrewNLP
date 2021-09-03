@@ -25,6 +25,8 @@ class MoE(DataClass):
 
 
 class Model(DataClass):
+    checkpoint_path: str = "checkpoint.torch"
+    steps_per_checkpoint: int = 0  # 0 -> disabled
     print_on_init: bool = True
     features: int = 256
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
@@ -45,10 +47,7 @@ class Model(DataClass):
 
 
 class Log(DataClass):
-    deepspeed_steps_per_print: int = 2 ** 20
-    wall_clock_breakdown: bool = False
-    dump_state: bool = False
-    loss_steps_per_print: int = 32
+    loss_steps_per_print: int = 32  # 0 -> off
 
 
 class Dataset(DataClass):

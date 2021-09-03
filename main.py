@@ -1,13 +1,14 @@
-import argh
 import pathlib
 import typing
+
+import argh
 import yaml
 
 from src.dataclass import Context
-from src.utils.setup import setup_torch
-from src.utils.formatting import syntax_print
 from src.executable.preprocess import preprocess_data
 from src.executable.train import train_model
+from src.utils.formatting import syntax_print
+from src.utils.setup import setup_torch
 
 
 def get_context(config_path: typing.Optional[str] = None) -> Context:
@@ -33,7 +34,9 @@ def preprocess(in_path: str = 'data.txt', out_path: str = "out.tensor"):
 
 
 @argh.arg('-c', '--config_path', default='configs/small.yaml', help='Path for the config file')
-def train(config_path: typing.Optional[str] = None):
+@argh.arg('-s', '--steps', default=0, help='Number of steps to take. 0 = infinite')
+@argh.arg('-l', '--load_model', default=False, help='Whether to load an existing model checkpoint')
+def train(config_path: typing.Optional[str] = None, steps: int = 0, load_model: bool = False):
     '''
     Trains a model given the config file.
     '''
@@ -43,7 +46,7 @@ def train(config_path: typing.Optional[str] = None):
     dump = yaml.dump(ctx.serialize(), indent=4)
     syntax_print(dump, "yaml", title="Config")
 
-    train_model(ctx)
+    train_model(ctx, steps, load_model)
 
 
 @argh.arg('prompt', help='Input text to the model')
