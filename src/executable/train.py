@@ -56,11 +56,13 @@ def train_model(ctx: Context, steps=None):
                   tgt.squeeze(0).to(device=ctx.model.device, non_blocking=True))
         lss.backward()
         with torch.no_grad():
+            curr_loss += lss.detach()
+            if i % ctx.optimizer.gradient_accumulation_steps:
+                continue
             clip_gradient(ctx, mod)
             opt.step()
             opt.zero_grad()
             shed.step()
-            curr_loss += lss.detach()
             if i % ctx.log.loss_steps_per_print == 0:
                 mean_loss += curr_loss
                 rate = i / (time.time() - start_time)
