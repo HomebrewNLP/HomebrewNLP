@@ -81,10 +81,11 @@ def get_deepspeed_config(ctx: Context) -> dict:
             }
 
 
-def get_model(ctx: Context) -> torch.nn.Module:
+def get_model(ctx: Context) -> LinearAttention:
     mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
 
-    syntax_print(str(mod), "python", title="Model")
+    if ctx.model.print_on_init:
+        syntax_print(str(mod), "python", title="Model")
 
     parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)

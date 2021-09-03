@@ -130,12 +130,12 @@ class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
 
-        self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2)
+        self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
         self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
-        self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float))
+        self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
         momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         cell = LinearAttentionCell(self, ctx, init_scale)
@@ -146,7 +146,7 @@ class LinearAttention(torch.nn.Module):
                                                                   revlib.additive_coupling_forward],
                                                 coupling_inverse=[momentum_coupling_inverse,
                                                                   revlib.additive_coupling_inverse])
-        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,))
+        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
@@ -169,6 +169,20 @@ class AuxLoss(torch.autograd.Function):
         return None
 
 
+class TensorOffload(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inp: torch.Tensor, reference: torch.Tensor):
+        ctx.device = inp.device
+        return inp.to(device=reference.device, non_blocking=True)
+
+    @staticmethod
+    def backward(ctx, grad_outputs: torch.Tensor):
+        return grad_outputs.to(ctx.device, non_blocking=True), None
+
+
+offload = TensorOffload.apply
+
+
 class ParameterStore(torch.nn.Module):
     """
     Something (likely deepspeed) changes all parameters in a ParameterList to [1] even though standalone parameters
@@ -182,6 +196,9 @@ class ParameterStore(torch.nn.Module):
     def __repr__(self):
         return (f'{self.__class__.__name__}(shape={str(list(self.param.size()))}, device={self.param.device}, '
                 f'dtype={self.param.dtype})')
+
+    def __call__(self, reference: torch.Tensor):
+        return offload(self.param, reference)
 
 
 class LinearAttentionCell(torch.nn.Module):
@@ -211,8 +228,8 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
-        self._buffers["_cumsum_cache"] = self._cumsum_cache
-        self._buffers["_input_cache"] = self._input_cache
+        self._buffers["_cumsum_cache"] = self._cumsum_cache.to(ctx.model.device)
+        self._buffers["_input_cache"] = self._input_cache.to(ctx.model.device)
         self._non_persistent_buffers_set.discard("_cumsum_cache")
         self._non_persistent_buffers_set.discard("_input_cache")
 
@@ -222,12 +239,16 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp, self.divisor(), self.w0_gate,
-                                                                                    [store.param for store in self.w0],
-                                                                                    self.w1, self.w2_gate,
-                                                                                    [store.param for store in self.w2],
+        loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
+                                                                                    self.divisor(),
+                                                                                    offload(self.w0_gate, inp),
+                                                                                    [store(inp) for store in self.w0],
+                                                                                    offload(self.w1, inp),
+                                                                                    offload(self.w2_gate, inp),
+                                                                                    [store(inp) for store in self.w2],
                                                                                     self._input_cache,
-                                                                                    self._cumsum_cache, self.init_scale,
+                                                                                    self._cumsum_cache,
+                                                                                    self.init_scale,
                                                                                     self.bottleneck_group,
                                                                                     self.dropout_probability,
                                                                                     self.training, self.groups,
