@@ -1,11 +1,10 @@
-import time
-
 import torch
+import wandb
 from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
 from src.dataset import get_dataset
-from src.utils.formatting import pretty_print
+from src.utils.formatting import WandbLog
 from src.utils.setup import get_model
 
 
@@ -21,11 +20,17 @@ def clip_gradient(ctx: Context, mod: torch.nn.Module):
 
 
 def train_model(ctx: Context, steps=None, load_model: bool = False):
+    wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity)
+    wandb.config = ctx.serialize()
+    ctx = Context(wandb.config)
+
     mod = get_model(ctx)
+    wandb.watch(mod, log=ctx.log.wandb.model_log_type, log_freq=ctx.log.wandb.log_frequency)
+
     if load_model:
         mod.load()
     if not ctx.model.offloading:
-        mod = mod.apply(ctx.model.device)
+        mod = mod.to(ctx.model.device)
     opt = torch.optim.AdamW(mod.parameters())
     shed = lr_schedules.OneCycle(opt,
                                  ctx.optimizer.one_cycle.cycle_min_lr,
@@ -42,14 +47,9 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                                  ctx.optimizer.one_cycle.decay_mom_rate,
                                  ctx.optimizer.one_cycle.last_batch_iteration)
     data = get_dataset(ctx)
-    length = len(data)
-    len_len = len(str(length))
+    log = WandbLog(ctx, len(data))
+    curr_loss = torch.zeros([], device=ctx.model.device, dtype=torch.float16 if ctx.model.float16 else torch.float)
 
-    dtype = torch.float16 if ctx.model.float16 else torch.float
-    mean_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
-    curr_loss = torch.zeros([], device=ctx.model.device, dtype=dtype)
-
-    start_time = time.time()
     for i, (src, tgt) in enumerate(data, 1):
         lss = mod(src.squeeze(0).to(device=ctx.model.device, non_blocking=True),
                   tgt.squeeze(0).to(device=ctx.model.device, non_blocking=True))
@@ -62,16 +62,10 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
             opt.step()
             opt.zero_grad()
             shed.step()
+            for p in opt.param_groups:  # OneCycle resets beta2 to 0.990
+                p['betas'] = p['betas'][0], ctx.optimizer.beta2
             if ctx.log.loss_steps_per_print and i % ctx.log.loss_steps_per_print == 0:
-                mean_loss += curr_loss
-                rate = i / (time.time() - start_time)
-                pretty_print \
-                    (f"[{i:{len_len}d}/{length}]",
-                     f"Loss: {curr_loss.item() / ctx.log.loss_steps_per_print:7.4f} -",
-                     f"Mean: {mean_loss.item() / i:7.4f} |",
-                     f"LR: {opt.param_groups[0]['lr']:.6f} |",
-                     f"Batch/s: {rate:6.3f} -",
-                     f"Tokens/day: {3600 * 24 * rate * ctx.model.batch_size * ctx.model.sequence_length:11,.0f}")
+                log(curr_loss, opt.param_groups[0]['lr'], opt.param_groups[0]['betas'])
                 curr_loss = 0
             if ctx.model.steps_per_checkpoint and i % ctx.model.steps_per_checkpoint == 0:
                 mod.save()
