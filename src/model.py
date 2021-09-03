@@ -129,7 +129,7 @@ class LinearAttention(torch.nn.Module):
 
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
-
+        self.path = ctx.model.checkpoint_path
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
         self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
 
