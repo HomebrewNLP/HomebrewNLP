@@ -20,8 +20,7 @@ def clip_gradient(ctx: Context, mod: torch.nn.Module):
 
 
 def train_model(ctx: Context, steps=None, load_model: bool = False):
-    wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity)
-    wandb.config = ctx.serialize()
+    wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity, config=ctx.serialize())
     ctx = Context(wandb.config)
 
     mod = get_model(ctx)
