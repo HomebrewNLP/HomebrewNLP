@@ -2,6 +2,7 @@ import pathlib
 import typing
 
 import torch
+import yaml
 
 
 class DataClass:
@@ -143,7 +144,7 @@ class Context(DataClass):
         self.wandb = WandB()
 
         if config_path is not None:
-            config = config_path.read_text()
+            config = yaml.safe_load(config_path.read_text())
 
         if config is not None:
             init_class(self, config)
