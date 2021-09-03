@@ -62,6 +62,8 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
             opt.step()
             opt.zero_grad()
             shed.step()
+            for p in opt.param_groups:  # OneCycle resets beta2 to 0.990
+                p['betas'] = p['betas'][0], ctx.optimizer.beta2
             if ctx.log.loss_steps_per_print and i % ctx.log.loss_steps_per_print == 0:
                 log(curr_loss, opt.param_groups[0]['lr'], opt.param_groups[0]['betas'])
                 curr_loss = 0
