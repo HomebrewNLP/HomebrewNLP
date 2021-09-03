@@ -2,7 +2,6 @@ import pathlib
 import typing
 
 import torch
-import yaml
 
 
 class DataClass:
@@ -46,10 +45,6 @@ class Model(DataClass):
     offloading: bool = False
 
 
-class Log(DataClass):
-    loss_steps_per_print: int = 32  # 0 -> off
-
-
 class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
@@ -57,6 +52,18 @@ class Dataset(DataClass):
     num_workers: int = 4
     pin_memory: bool = False
     prefetch_factor: int = 2
+
+
+class WandB(DataClass):
+    project: str = 'gpt'
+    entity: str = 'homebrewnlp'
+    model_log_type: typing.Optional[str] = None  # One of "gradients", "parameters", "all", or None
+    log_frequency: int = 1000  # log gradients and parameters every N batches
+
+
+class Log(DataClass):
+    loss_steps_per_print: int = 32  # 0 -> off
+    wandb: WandB = WandB()
 
 
 class Offload(DataClass):
@@ -133,10 +140,10 @@ class Context(DataClass):
         self.dataset = Dataset()
         self.model = Model()
         self.eval = Eval()
+        self.wandb = WandB()
 
         if config_path is not None:
-            cfg = config_path.read_text()
-            init_class(self, yaml.safe_load(cfg))
+            config = config_path.read_text()
 
         if config is not None:
-            self.__dict__.update(config)
+            init_class(self, config)
