@@ -49,7 +49,7 @@ class WandbLog:
         rate = self.ctx.log.loss_steps_per_print * self.idx / (time.time() - self.start_time)
         tokens_per_day = 3600 * 24 * rate * self.ctx.model.batch_size * self.ctx.model.sequence_length
 
-        pretty_print(f"[{self.idx:{len(str(self.steps))}d}/{self.steps}]",
+        pretty_print(f"[{self.idx * self.ctx.log.loss_steps_per_print:{len(str(self.steps))}d}/{self.steps}]",
                      f"Loss: {curr_loss:7.4f} -",
                      f"Mean: {self.mean_loss:7.4f} |",
                      f"LR: {learning_rate:.6f} |",
