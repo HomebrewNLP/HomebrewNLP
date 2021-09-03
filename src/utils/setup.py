@@ -1,8 +1,9 @@
 import math
-import numpy as np
 import random
-import torch
 
+import numpy as np
+
+import torch
 from src.dataclass import Context
 from src.model import LinearAttention
 from src.utils.formatting import syntax_print

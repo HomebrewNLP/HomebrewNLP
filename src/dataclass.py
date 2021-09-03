@@ -1,7 +1,8 @@
-import torch
-import typing
-import yaml
 import pathlib
+import typing
+
+import torch
+import yaml
 
 
 class DataClass:
