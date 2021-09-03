@@ -30,7 +30,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
     if load_model:
         mod.load()
     if not ctx.model.offloading:
-        mod = mod.apply(ctx.model.device)
+        mod = mod.to(ctx.model.device)
     opt = torch.optim.AdamW(mod.parameters())
     shed = lr_schedules.OneCycle(opt,
                                  ctx.optimizer.one_cycle.cycle_min_lr,
