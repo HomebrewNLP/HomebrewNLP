@@ -63,7 +63,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
             opt.zero_grad()
             shed.step()
             if ctx.log.loss_steps_per_print and i % ctx.log.loss_steps_per_print == 0:
-                log(curr_loss, opt.param_groups[0]['lr'])
+                log(curr_loss, opt.param_groups[0]['lr'], opt.param_groups[0]['betas'])
                 curr_loss = 0
             if ctx.model.steps_per_checkpoint and i % ctx.model.steps_per_checkpoint == 0:
                 mod.save()
