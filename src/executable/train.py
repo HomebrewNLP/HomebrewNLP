@@ -63,7 +63,7 @@ def train_model(ctx: Context, steps=None):
             opt.step()
             opt.zero_grad()
             shed.step()
-            if i % ctx.log.loss_steps_per_print == 0:
+            if ctx.log.loss_steps_per_print and i % ctx.log.loss_steps_per_print == 0:
                 mean_loss += curr_loss
                 rate = i / (time.time() - start_time)
                 pretty_print \
@@ -74,5 +74,7 @@ def train_model(ctx: Context, steps=None):
                      f"Batch/s: {rate:6.3f} -",
                      f"Tokens/day: {3600 * 24 * rate * ctx.model.batch_size * ctx.model.sequence_length:11,.0f}")
                 curr_loss = 0
+            if ctx.model.steps_per_checkpoint and i % ctx.model.steps_per_checkpoint == 0:
+                mod.save()
         if steps is not None and i > steps:
             return
