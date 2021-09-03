@@ -1,15 +1,16 @@
 model:
+  offloading: true
   print_on_init: false
-  depth: 256
+  depth: 128
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 4
+  batch_size: 1
   feed_forward_intermediate_factor: 0.125
   features: 512
   moe:
     use_in_input: false
     use_in_output: true
-    num_experts: 64
+    num_experts: 128
 optimizer:
   gradient_accumulation_steps: 1
   one_cycle:
@@ -18,4 +19,4 @@ optimizer:
     cycle_max_lr: 0.002
     cycle_min_mom: 0.7
 log:
-  print_interval: 64
+    loss_steps_per_print: 1
