@@ -37,14 +37,15 @@ class WandbLog:
         self.start_time = time.time()
         self.ctx = ctx
         self.idx = 0
+        self.prev = 0
         self.steps = steps
 
     def __call__(self, current_loss: torch.Tensor, learning_rate: float):
         curr_loss = current_loss.item() / self.ctx.log.loss_steps_per_print
         del current_loss
-
-        self.mean_loss = (self.mean_loss * self.idx + curr_loss * (self.idx + 1)) / (self.idx * 2 + 1)
         self.idx += 1
+        self.mean_loss = (self.mean_loss * self.prev + curr_loss * self.idx) / (self.prev + self.idx)
+        self.prev += self.idx
 
         rate = self.ctx.log.loss_steps_per_print * self.idx / (time.time() - self.start_time)
         tokens_per_day = 3600 * 24 * rate * self.ctx.model.batch_size * self.ctx.model.sequence_length
