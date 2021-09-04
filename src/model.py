@@ -256,7 +256,7 @@ class LinearAttentionCell(torch.nn.Module):
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         if self.training:
-            div = self.divisor
+            div = self.divisor()
         elif self.caching:
             self.idx += inp.size(2)
             div = torch.LongTensor([self.idx]).to(inp.device)
