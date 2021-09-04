@@ -29,7 +29,7 @@ def pretty_print(*data):
 
 
 def log(*data, log_locals: bool = False):
-    console.log(*data, log_locals=locals)
+    console.log(*data, log_locals=log_locals)
 
 
 class WandbLog:
