@@ -51,8 +51,8 @@ def get_model(ctx: Context, load_model: bool) -> LinearAttention:
     return mod
 
 
-def encode(prompt: str) -> torch.LongTensor:
-    return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8)).long()
+def encode(prompt: str) -> torch.Tensor:
+    return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))
 
 
 def decode(output: torch.LongTensor) -> str:

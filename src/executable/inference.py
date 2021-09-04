@@ -23,7 +23,8 @@ def complete_batch(ctx: Context, model: LinearAttention, prompt: torch.Tensor, t
 
 
 def complete(ctx: Context, model: LinearAttention, prompt: str, temperature: float, generated_tokens: int) -> str:
-    return complete_batch(ctx, model, encode(prompt).to(ctx.model.device).view(1, -1), temperature, generated_tokens)[0]
+    return complete_batch(ctx, model, encode(prompt).to(dtype=torch.long, device=ctx.model.device).view(1, -1),
+                          temperature, generated_tokens)[0]
 
 
 @torch.no_grad()
