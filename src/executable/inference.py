@@ -11,10 +11,10 @@ def complete_batch(ctx: Context, model: LinearAttention, prompt: torch.Tensor, t
                    generated_tokens: int) -> typing.List[str]:
     batch, prompt_size = prompt.size()
     out = prompt
-    for i in range(prompt_size, prompt_size + generated_tokens):
+    for _ in range(prompt_size, prompt_size + generated_tokens):
         tmp = model(prompt)[:, :, -1]
         tmp += torch.rand_like(tmp).clamp(min=1e-9).log().neg().log() * (-temperature)
-        new_item = torch.argmax(tmp, -1).view(1, -1)
+        new_item = torch.argmax(tmp, -1).view(batch, -1)
         out = prompt = torch.cat([out, new_item], -1)
         if ctx.eval.cache:
             prompt = new_item

@@ -4,7 +4,7 @@ from typing import Optional
 
 import torch
 import wandb
-from rich import print
+from rich import print as rich_print
 from rich.console import Console
 from rich.syntax import Syntax
 
@@ -25,10 +25,10 @@ def syntax_print(string: str, language: Optional[str] = "python", theme: Optiona
 
 
 def pretty_print(*data):
-    print(*data)
+    rich_print(*data)
 
 
-def log(*data, locals: bool = False):
+def log(*data, log_locals: bool = False):
     console.log(*data, log_locals=locals)
 
 
@@ -43,7 +43,6 @@ class WandbLog:
 
     def __call__(self, current_loss: torch.Tensor, learning_rate: float, betas: typing.Tuple[float, float]):
         curr_loss = current_loss.item() / self.ctx.log.loss_steps_per_print
-        del current_loss
         self.idx += 1
         self.mean_loss = (self.mean_loss * self.prev + curr_loss * self.idx) / (self.prev + self.idx)  # LWMA
         self.prev += self.idx

@@ -167,8 +167,12 @@ class LinearAttention(torch.nn.Module):
 
     def load(self):
         wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
-        assert all(any(k.startswith('_') for k in m.split('.'))
-                   for m in wrong_keys.missing_keys + wrong_keys.unexpected_keys)
+        for m in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
+            if not any(k.startswith('_') for k in m.split('.'):
+                if k in wrong_keys.missing_keys:
+                    raise ValueError(f"{k} is missing in checkpoint but exists in model")
+                if k in wrong_keys.unexpected_keys:
+                    raise ValueError(f"{k} is missing in model but exists in checkpoint")
 
     def reset_cache(self):
         for mod in self.stem.modules():
@@ -186,7 +190,6 @@ class AuxLoss(torch.autograd.Function):
     def backward(ctx, grad_outputs: torch.Tensor):
         inp, = ctx.saved_tensors
         inp.mean().backward()
-        return None
 
 
 class TensorOffload(torch.autograd.Function):

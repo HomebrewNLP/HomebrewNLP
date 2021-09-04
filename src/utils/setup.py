@@ -6,7 +6,7 @@ import torch
 
 from src.dataclass import Context
 from src.model import LinearAttention
-from src.utils.formatting import print
+from src.utils.formatting import pretty_print
 
 
 def setup_torch(seed: int):
@@ -39,11 +39,11 @@ def get_model(ctx: Context, load_model: bool) -> LinearAttention:
     mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
 
     if ctx.model.print_on_init:
-        print(str(mod))
+        pretty_print(str(mod))
 
     parameters = sum(np.prod(p.size()) for p in filter(lambda p: p.requires_grad, mod.parameters()))
     base = int(math.log10(parameters) / 3)
-    print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
+    pretty_print(f'Parameters: {parameters / (1000 ** base):.1f}{" kMBT"[base]}')
     if load_model:
         mod.load()
     if not ctx.model.offloading:
