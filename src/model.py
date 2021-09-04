@@ -56,12 +56,14 @@ def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
         gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     out = torch.nn.functional.conv1d(inp, gate)
     gates = torch.nn.functional.softmax(out, dim=1)
-    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1]).to(dtype=torch.bool)
+    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1])
+    gumbel = one_hot.transpose(1, 2) - gates.detach() + gates
+    one_hot = one_hot.to(dtype=torch.bool)
     inp_t = inp.transpose(1, 2)
     batch, features, sequence = inp.size()
     out = torch.empty((batch * sequence, w[0].size(1)), device=inp.device, dtype=inp.dtype)
-    for expert, param in zip(one_hot.unbind(-1), w):
-        tmp = torch.masked_select(inp_t, expert.unsqueeze(2)).view(-1, features).mm(param)
+    for expert, g, param in zip(one_hot.unbind(-1), gumbel.unbind(1), w):
+        tmp = torch.masked_select(inp_t * g.unsqueeze(2), expert.unsqueeze(2)).view(-1, features).mm(param)
         out = out.masked_scatter(expert.view(-1, 1), tmp)
     loss = torch.sum(torch.mean(gates, dim=(0, 2)) * torch.mean(one_hot.float(), dim=(0, 1)))
     return loss, out.view(batch, sequence, -1).transpose(1, 2)
@@ -84,9 +86,9 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     if not training and caching:
-        input_cache = inp[:, :, -kernel_size:].detach()
-        if idx - 1 > kernel_size:
-            inp = torch.cat([input_cache, inp])
+        if idx - 1 > kernel_size and inp.size(2) == 1:
+            inp = torch.cat([input_cache, inp], -1)
+        input_cache = inp[:, :, -kernel_size - 1:].detach()
     loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
     inp = torch.relu(inp)
     inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group)
@@ -96,7 +98,11 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
     cum = depth.cumsum(1)
     if not training and caching:
         cum = cum + cumsum_cache
-        cumsum_cache = cum[:, :, -kernel_size - 1].detach()
+        scale = scale[:, :, -1:]
+        shift = shift[:, :, -1:]
+        cum = cum[:, :, -1:]
+        if idx - 1 > kernel_size:
+            cumsum_cache = cum.detach()
     return loss0, loss1, input_cache, cumsum_cache, norm(cum / divisor * scale + shift) * init_scale
 
 
@@ -149,7 +155,7 @@ class LinearAttention(torch.nn.Module):
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
-    def forward(self, inp: torch.Tensor, tgt: torch.Tensor):
+    def forward(self, inp: torch.Tensor, tgt: typing.Optional[torch.Tensor] = None):
         out = self.output(self.stem(self.embedding(inp).transpose(1, 2)))
         if not self.training:
             return out
@@ -160,6 +166,11 @@ class LinearAttention(torch.nn.Module):
 
     def load(self):
         self.load_state_dict(torch.load(self.path))
+
+    def reset_cache(self):
+        for mod in self.stem.modules():
+            if isinstance(mod, LinearAttentionCell):
+                mod.reset_cache()
 
 
 class AuxLoss(torch.autograd.Function):
@@ -234,19 +245,23 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
-        self._buffers["_cumsum_cache"] = self._cumsum_cache.to(ctx.model.device)
-        self._buffers["_input_cache"] = self._input_cache.to(ctx.model.device)
-        self._non_persistent_buffers_set.discard("_cumsum_cache")
-        self._non_persistent_buffers_set.discard("_input_cache")
 
     def reset_cache(self):
-        self._cumsum_cache.mul_(0)
-        self._input_cache.mul_(0)
+        self._cumsum_cache = torch.zeros([])
+        self._input_cache = torch.zeros([])
         self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
+        if self.training:
+            div = self.divisor
+        elif self.caching:
+            self.idx += inp.size(2)
+            div = torch.LongTensor([self.idx]).to(inp.device)
+        else:
+            self.idx = inp.size(2)
+            div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
         loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
-                                                                                    self.divisor(),
+                                                                                    div,
                                                                                     offload(self.w0_gate, inp),
                                                                                     [store(inp) for store in self.w0],
                                                                                     offload(self.w1, inp),
@@ -260,5 +275,4 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.training, self.groups,
                                                                                     self.caching, self.idx)
         AuxLoss.apply(loss0 + loss1)
-        self.idx += 1
         return out
