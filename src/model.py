@@ -31,14 +31,13 @@ def norm(out: torch.Tensor) -> torch.Tensor:
     return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
 
 
-def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int) -> torch.Tensor:
-    pad = weight.size()[-1] - 1
-    if pad:
-        inp = torch.nn.functional.pad(inp, (pad, 0))
+def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
+    if use_pad and weight.size()[-1] - 1 > 0:
+        inp = torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0))
     return torch.nn.functional.conv1d(inp, weight, groups=groups)
 
 
-def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int) -> torch.Tensor:
+def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int, pad: bool) -> torch.Tensor:
     batch, features, sequence = inp.size()
     if 0 < p < 1:
         if train:
@@ -49,7 +48,7 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, gr
             weight = weight * p
         else:
             inp = inp * p
-    return conv(inp, weight, groups)
+    return conv(inp, weight, groups, pad)
 
 
 def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
@@ -74,7 +73,7 @@ def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tens
     if w:
         return moe(inp, w, w_gate)
     return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
-            drop_conv(inp, w_gate, dropout_probability, training, groups))
+            drop_conv(inp, w_gate, dropout_probability, training, groups, False))
 
 
 @torch.jit.script
@@ -85,13 +84,15 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
                      caching: bool, idx: int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
+    pad = True
     if not training and caching:
         if idx - 1 > kernel_size and inp.size(2) == 1:
+            pad = False
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size - 1:].detach()
     loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
     inp = torch.relu(inp)
-    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group)
+    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
     inp = torch.relu(inp)
     loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
     depth, scale, shift = inp.chunk(groups, 1)
