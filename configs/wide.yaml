@@ -1,18 +1,27 @@
 model:
-  depth: 8
+  print_on_init: false
+  depth: 16
+  offloading: true
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 32
+  batch_size: 8
   feed_forward_intermediate_factor: 0.125
-  features: 4096
+  features: 16384
+  moe:
+    use_in_input: false
+    use_in_output: false
+    num_experts: 8
 optimizer:
-  gradient_accumulation_steps: 1
+  beta2: 0.95
+  gradient_accumulation_steps: 4
   one_cycle:
     cycle_first_step_size: 8192
-    cycle_second_step_size: 4096
-    cycle_min_lr: 0.00015
-    cycle_max_lr: 0.0005
-    cycle_min_mom: 0.85
-    cycle_max_mom: 0.99
+    cycle_second_step_size: null
+    cycle_min_lr: 0.0002
+    cycle_max_lr: 0.002
+    cycle_min_mom: 0.6
+    cycle_max_mom: 0.9
 log:
-  print_interval: 64
+  loss_steps_per_print: 1
+dataset:
+  num_workers: 12
