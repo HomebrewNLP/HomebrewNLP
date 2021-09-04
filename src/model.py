@@ -138,7 +138,7 @@ class LinearAttention(torch.nn.Module):
         super(LinearAttention, self).__init__()
         self.path = ctx.model.checkpoint_path
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
-        self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
+        orthonormal(self.embedding.weight, ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
