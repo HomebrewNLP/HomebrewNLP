@@ -23,13 +23,9 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
     wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity, config=ctx.serialize())
     ctx = Context(wandb.config)
 
-    mod = get_model(ctx)
+    mod = get_model(ctx, load_model)
     wandb.watch(mod, log=ctx.log.wandb.model_log_type, log_freq=ctx.log.wandb.log_frequency)
 
-    if load_model:
-        mod.load()
-    if not ctx.model.offloading:
-        mod = mod.to(ctx.model.device)
     opt = torch.optim.AdamW(mod.parameters())
     shed = lr_schedules.OneCycle(opt,
                                  ctx.optimizer.one_cycle.cycle_min_lr,
