@@ -130,10 +130,6 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
 
 
 class LinearAttention(torch.nn.Module):
-    """
-    One idea would be to run linear attention at every step in an rnn
-    """
-
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
         self.path = ctx.model.checkpoint_path
