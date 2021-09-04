@@ -1,6 +1,7 @@
 import typing
 
 import torch
+import torch.utils.data
 
 from src.dataclass import Context
 
@@ -15,17 +16,17 @@ def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> typin
 class Dataset(torch.utils.data.Dataset):
     def __init__(self, ctx: Context):
         self.data = torch.load(ctx.dataset.file_name)
-        batch_index = torch.arange(0, ctx.model.batch_size * ctx.optimizer.gradient_accumulation_steps).view(-1, 1)
+        batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
         item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
         self.batch_index = batch_index + item_index
         self.length = self.data.size(0) // ctx.model.sequence_length // ctx.model.batch_size - 1
-        self.batch_size = ctx.model.batch_size
+        self.step_size = ctx.model.batch_size * ctx.model.sequence_length
 
     def __len__(self):
         return self.length
 
     def __getitem__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-        return get_sample(self.data, self.batch_index, idx * self.batch_size)
+        return get_sample(self.data, self.batch_index, idx * self.step_size)
 
 
 def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:

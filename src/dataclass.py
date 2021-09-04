@@ -119,7 +119,7 @@ class Optimizer(DataClass):
 
 
 class Eval(DataClass):
-    cache: bool = True
+    cache: bool = False
 
 
 def init_class(instance: DataClass, config: typing.Dict[str, typing.Any]):
