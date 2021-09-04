@@ -51,7 +51,7 @@ def train(config_path: typing.Optional[str] = None, steps: int = 0, load_model: 
 
 
 @argh.arg('-g', '--generated_tokens', default='20', help='Number of tokens to be generated after prompt')
-@argh.arg('-t', '--temp', default='0.7', help='Temperature of the model.\nlower = consistency\nhigher = "creativity"')
+@argh.arg('-t', '--temp', default='0.2', help='Temperature of the model.\nlower = consistency\nhigher = "creativity"')
 @argh.arg('-c', '--config_path', help='Path for the config file')
 def inference(generated_tokens: int = 20, temp: float = 0.2, config_path: str = None):
     '''
