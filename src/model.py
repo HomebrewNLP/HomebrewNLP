@@ -89,7 +89,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         if idx - 1 > kernel_size and inp.size(2) == 1:
             pad = False
             inp = torch.cat([input_cache, inp], -1)
-        input_cache = inp[:, :, -kernel_size - 1:].detach()
+        input_cache = inp[:, :, -kernel_size + 1:].detach()
     loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
     inp = torch.relu(inp)
     inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
@@ -166,7 +166,9 @@ class LinearAttention(torch.nn.Module):
         torch.save(self.state_dict(), self.path)
 
     def load(self):
-        self.load_state_dict(torch.load(self.path))
+        wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
+        assert all(any(k.startswith('_') for k in m.split('.'))
+                   for m in wrong_keys.missing_keys + wrong_keys.unexpected_keys)
 
     def reset_cache(self):
         for mod in self.stem.modules():
