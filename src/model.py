@@ -130,15 +130,11 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
 
 
 class LinearAttention(torch.nn.Module):
-    """
-    One idea would be to run linear attention at every step in an rnn
-    """
-
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
         self.path = ctx.model.checkpoint_path
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
-        self.embedding.weight.data.mul_(ctx.model.input_embedding_std * 2 ** -0.5)
+        orthonormal(self.embedding.weight, ctx.model.input_embedding_std * 2 ** -0.5)
 
         init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
@@ -167,12 +163,12 @@ class LinearAttention(torch.nn.Module):
 
     def load(self):
         wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
-        for m in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
-            if not any(k.startswith('_') for k in m.split('.'):
-                if k in wrong_keys.missing_keys:
-                    raise ValueError(f"{k} is missing in checkpoint but exists in model")
-                if k in wrong_keys.unexpected_keys:
-                    raise ValueError(f"{k} is missing in model but exists in checkpoint")
+        for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
+            if not any(k.startswith('_') for k in key.split('.')):
+                if key in wrong_keys.missing_keys:
+                    raise ValueError(f"{key} is missing in checkpoint but exists in model")
+                if key in wrong_keys.unexpected_keys:
+                    raise ValueError(f"{key} is missing in model but exists in checkpoint")
 
     def reset_cache(self):
         for mod in self.stem.modules():

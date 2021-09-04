@@ -42,13 +42,14 @@ class WandbLog:
         self.steps = steps
 
     def __call__(self, current_loss: torch.Tensor, learning_rate: float, betas: typing.Tuple[float, float]):
-        curr_loss = current_loss.item() / self.ctx.log.loss_steps_per_print
+        grad_accum = self.ctx.optimizer.gradient_accumulation_steps
+        curr_loss = current_loss.item() / self.ctx.log.loss_steps_per_print / grad_accum
         self.idx += 1
         self.mean_loss = (self.mean_loss * self.prev + curr_loss * self.idx) / (self.prev + self.idx)  # LWMA
         self.prev += self.idx
 
         rate = self.ctx.log.loss_steps_per_print * self.idx / (time.time() - self.start_time)
-        tokens_per_day = 3600 * 24 * rate * self.ctx.model.batch_size * self.ctx.model.sequence_length
+        tokens_per_day = grad_accum * 3600 * 24 * rate * self.ctx.model.batch_size * self.ctx.model.sequence_length
 
         pretty_print(f"[{self.idx * self.ctx.log.loss_steps_per_print:{len(str(self.steps))}d}/{self.steps}]",
                      f"Loss: {curr_loss:7.4f} -",
@@ -64,4 +65,5 @@ class WandbLog:
                    "Speed/Tokens per Day": tokens_per_day,
                    "Optimizer/Learning Rate": learning_rate,
                    "Optimizer/Beta 1": betas[0],
-                   "Optimizer/Beta 2": betas[1]})
+                   "Optimizer/Beta 2": betas[1]},
+                  step=self.idx * self.ctx.log.loss_steps_per_print)

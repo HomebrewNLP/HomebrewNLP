@@ -9,8 +9,9 @@ from src.model import LinearAttention
 from src.utils.formatting import pretty_print
 
 
+# skipcq: PYL-W0212
 def setup_torch(seed: int):
-    torch._C._debug_set_autodiff_subgraph_inlining(False)  # Not sure
+    torch._C._debug_set_autodiff_subgraph_inlining(False)
     torch._C._set_graph_executor_optimize(True)
     torch._C._set_backcompat_broadcast_warn(False)
     torch._C._set_backcompat_keepdim_warn(False)
