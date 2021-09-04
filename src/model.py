@@ -96,7 +96,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
     inp = torch.relu(inp)
     loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
     depth, scale, shift = inp.chunk(groups, 1)
-    cum = depth.cumsum(1)
+    cum = depth.cumsum(-1)
     if not training and caching:
         cum = cum + cumsum_cache
         scale = scale[:, :, -1:]
