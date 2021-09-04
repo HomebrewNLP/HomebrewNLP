@@ -9,27 +9,26 @@ from src.model import LinearAttention
 from src.utils.formatting import pretty_print
 
 
-# skipcq: PYL-W0212
 def setup_torch(seed: int):
-    torch._C._debug_set_autodiff_subgraph_inlining(False)
-    torch._C._set_graph_executor_optimize(True)
-    torch._C._set_backcompat_broadcast_warn(False)
-    torch._C._set_backcompat_keepdim_warn(False)
-    torch._C._set_cudnn_enabled(True)
-    torch._C._set_mkldnn_enabled(True)
-    torch._C._set_mkldnn_enabled(True)
-    torch._C._set_cudnn_benchmark(True)
-    torch._C._set_cudnn_deterministic(False)
-    torch._C._set_cudnn_allow_tf32(True)
-    torch._C._set_cublas_allow_tf32(True)
-    torch._C._jit_set_inline_everything_mode(True)
+    torch._C._debug_set_autodiff_subgraph_inlining(False)  # skipcq: PYL-W0212
+    torch._C._set_graph_executor_optimize(True)  # skipcq: PYL-W0212
+    torch._C._set_backcompat_broadcast_warn(False)  # skipcq: PYL-W0212
+    torch._C._set_backcompat_keepdim_warn(False)  # skipcq: PYL-W0212
+    torch._C._set_cudnn_enabled(True)  # skipcq: PYL-W0212
+    torch._C._set_mkldnn_enabled(True)  # skipcq: PYL-W0212
+    torch._C._set_mkldnn_enabled(True)  # skipcq: PYL-W0212
+    torch._C._set_cudnn_benchmark(True)  # skipcq: PYL-W0212
+    torch._C._set_cudnn_deterministic(False)  # skipcq: PYL-W0212
+    torch._C._set_cudnn_allow_tf32(True)  # skipcq: PYL-W0212
+    torch._C._set_cublas_allow_tf32(True)  # skipcq: PYL-W0212
+    torch._C._jit_set_inline_everything_mode(True)  # skipcq: PYL-W0212
 
-    torch._C._jit_set_profiling_executor(True)
-    torch._C._jit_set_profiling_mode(True)
-    torch._C._jit_override_can_fuse_on_cpu(False)
-    torch._C._jit_override_can_fuse_on_gpu(True)
-    torch._C._jit_set_texpr_fuser_enabled(True)
-    torch._C._jit_set_nvfuser_enabled(False)
+    torch._C._jit_set_profiling_executor(True)  # skipcq: PYL-W0212
+    torch._C._jit_set_profiling_mode(True)  # skipcq: PYL-W0212
+    torch._C._jit_override_can_fuse_on_cpu(False)  # skipcq: PYL-W0212
+    torch._C._jit_override_can_fuse_on_gpu(True)  # skipcq: PYL-W0212
+    torch._C._jit_set_texpr_fuser_enabled(True)  # skipcq: PYL-W0212
+    torch._C._jit_set_nvfuser_enabled(False)  # skipcq: PYL-W0212
 
     random.seed(seed)
     np.random.seed(seed)
