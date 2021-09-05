@@ -191,7 +191,7 @@ class Trainer(torch.nn.Module):
         torch.save(self.state_dict(), self.ctx.model.checkpoint_path)
 
     def load(self):
-        wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
+        wrong_keys = self.load_state_dict(torch.load(self.ctx.model.checkpoint_path), strict=False)
         for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
             if not any(k.startswith('_') for k in key.split('.')):
                 if key in wrong_keys.missing_keys:
