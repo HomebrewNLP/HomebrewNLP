@@ -1,4 +1,5 @@
 model:
+  steps_per_checkpoint: 1024
   print_on_init: false
   depth: 16
   offloading: true
