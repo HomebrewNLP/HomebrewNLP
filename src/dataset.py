@@ -30,7 +30,7 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
-    if ctx.dataset.prefetch_factor < ctx.dataset.shuffle:
+    if ctx.dataset.prefetch_factor < ctx.dataset.num_workers:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
