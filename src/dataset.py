@@ -34,6 +34,6 @@ def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
-    return torch.utils.data.DataLoader(Dataset(ctx), 1, ctx.dataset.shuffle,
+    return torch.utils.data.DataLoader(Dataset(ctx), 1, True,
                                        num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
                                        pin_memory=ctx.dataset.pin_memory, prefetch_factor=ctx.dataset.prefetch_factor)

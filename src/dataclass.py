@@ -49,7 +49,6 @@ class Model(DataClass):
 class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
-    shuffle: bool = True
     num_workers: int = 4
     pin_memory: bool = False
     prefetch_factor: int = 256  # 256 (Prefetch) * 8 (Long) * 2048 (GPT context) * 256 (High Batch) = 1GiB RAM
@@ -116,7 +115,7 @@ class Optimizer(DataClass):
     type: str = "AdamW"
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
-    beta2: float = 0.9999  # beta1 is controlled by one_cycle
+    beta2: float = 0.95  # beta1 is controlled by one_cycle
     epsilon: float = 1e-8
     weight_decay: float = 0.01
     zero: Zero = Zero()
