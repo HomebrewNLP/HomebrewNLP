@@ -5,7 +5,7 @@ import numpy as np
 import torch
 
 from src.dataclass import Context
-from src.model import LinearAttention
+from src.model import LinearAttention, Trainer
 from src.utils.formatting import pretty_print
 
 
@@ -35,8 +35,8 @@ def setup_torch(seed: int):
     torch.manual_seed(seed)
 
 
-def get_model(ctx: Context, load_model: bool) -> LinearAttention:
-    mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
+def get_model(ctx: Context, load_model: bool) -> Trainer:
+    mod = Trainer(ctx, LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float))
 
     if ctx.model.print_on_init:
         pretty_print(str(mod))

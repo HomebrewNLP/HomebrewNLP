@@ -106,6 +106,12 @@ class AdaptiveGradientClipping(DataClass):
     eps: float = 1e-3
 
 
+class SharpnessAwareMinimization(DataClass):
+    enabled: bool = True
+    step_size: bool = 0.05
+    adaptive: bool = True
+
+
 class Optimizer(DataClass):
     type: str = "AdamW"
     gradient_accumulation_steps: int = 1
@@ -113,9 +119,9 @@ class Optimizer(DataClass):
     beta2: float = 0.9999  # beta1 is controlled by one_cycle
     epsilon: float = 1e-8
     weight_decay: float = 0.01
-    gradient_clipping: float = 1.
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
+    sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
 
 
 class Eval(DataClass):

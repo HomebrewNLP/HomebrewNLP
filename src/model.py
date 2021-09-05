@@ -5,6 +5,8 @@ import numpy as np
 import revlib
 import torch
 import torch.nn.functional
+import torch.utils.data
+from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
 
@@ -129,10 +131,78 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
     return orthonormal(torch.nn.Conv1d(in_features, out_features, (kernel_size,), groups=groups).weight, 1 / std)
 
 
+class Trainer(torch.nn.Module):
+    def __init__(self, ctx: Context, model: torch.nn.Module):
+        super(Trainer, self).__init__()
+        self.ctx = ctx
+        self.model = model
+        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=ctx.optimizer.weight_decay)
+        self.scheduler = lr_schedules.OneCycle(self.optimizer,
+                                               ctx.optimizer.one_cycle.cycle_min_lr,
+                                               ctx.optimizer.one_cycle.cycle_max_lr,
+                                               ctx.optimizer.one_cycle.decay_lr_rate,
+                                               ctx.optimizer.one_cycle.cycle_first_step_size,
+                                               ctx.optimizer.one_cycle.cycle_second_step_size,
+                                               ctx.optimizer.one_cycle.cycle_first_stair_count,
+                                               ctx.optimizer.one_cycle.cycle_second_stair_count,
+                                               ctx.optimizer.one_cycle.decay_step_size,
+                                               ctx.optimizer.one_cycle.cycle_momentum,
+                                               ctx.optimizer.one_cycle.cycle_min_mom,
+                                               ctx.optimizer.one_cycle.cycle_max_mom,
+                                               ctx.optimizer.one_cycle.decay_mom_rate,
+                                               ctx.optimizer.one_cycle.last_batch_iteration)
+
+    @torch.no_grad()
+    def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
+        return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
+
+    def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
+        loss = torch.nn.functional.cross_entropy(self.model(self._to_device_detach(src)), self._to_device_detach(tgt))
+        loss.backward()
+        return loss.detach()
+
+    @torch.no_grad()
+    def _clip_gradient(self):
+        for p in self.gradients():
+            g_norm = p.grad.norm(2, 0, True).clamp(min=self.ctx.optimizer.agc.zero_division_eps)
+            p_norm = p.norm(2, 0, True).clamp(min=self.ctx.optimizer.agc.eps)
+            grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
+            p.grad.data.copy_(p.grad * grad_scale)
+
+    def accumulated_step(self, dataloader: torch.utils.data.DataLoader) -> torch.Tensor:
+        loss = sum(self._forward_backward(s.squeeze(0), t.squeeze(0)) for (s, t), _ in
+                   zip(dataloader, range(self.ctx.optimizer.gradient_accumulation_steps)))
+        self._clip_gradient()
+        return loss
+
+    @torch.no_grad()
+    def zero_grad(self):
+        for p in self.model.parameters():
+            p.grad = None
+
+    @torch.no_grad()
+    def gradients(self) -> torch.nn.Parameter:
+        for p in self.model.parameters():
+            if p.grad is None:
+                continue
+            yield p
+
+    def save(self):
+        torch.save(self.state_dict(), self.ctx.model.checkpoint_path)
+
+    def load(self):
+        wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
+        for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
+            if not any(k.startswith('_') for k in key.split('.')):
+                if key in wrong_keys.missing_keys:
+                    raise ValueError(f"{key} is missing in checkpoint but exists in model")
+                if key in wrong_keys.unexpected_keys:
+                    raise ValueError(f"{key} is missing in model but exists in checkpoint")
+
+
 class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
-        self.path = ctx.model.checkpoint_path
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
         orthonormal(self.embedding.weight, ctx.model.input_embedding_std * 2 ** -0.5)
 
@@ -152,23 +222,8 @@ class LinearAttention(torch.nn.Module):
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
-    def forward(self, inp: torch.Tensor, tgt: typing.Optional[torch.Tensor] = None):
-        out = self.output(self.stem(self.embedding(inp).transpose(1, 2)))
-        if not self.training:
-            return out
-        return torch.nn.functional.cross_entropy(out, tgt)
-
-    def save(self):
-        torch.save(self.state_dict(), self.path)
-
-    def load(self):
-        wrong_keys = self.load_state_dict(torch.load(self.path), strict=False)
-        for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
-            if not any(k.startswith('_') for k in key.split('.')):
-                if key in wrong_keys.missing_keys:
-                    raise ValueError(f"{key} is missing in checkpoint but exists in model")
-                if key in wrong_keys.unexpected_keys:
-                    raise ValueError(f"{key} is missing in model but exists in checkpoint")
+    def forward(self, inp: torch.Tensor):
+        return self.output(self.stem(self.embedding(inp).transpose(1, 2)))
 
     def reset_cache(self):
         for mod in self.stem.modules():

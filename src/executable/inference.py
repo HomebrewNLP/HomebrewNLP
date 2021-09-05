@@ -29,7 +29,7 @@ def complete(ctx: Context, model: LinearAttention, prompt: str, temperature: flo
 
 @torch.no_grad()
 def inference_cli(ctx: Context, temperature: float, generated_tokens: int):
-    mod = get_model(ctx, True)
+    mod = get_model(ctx, True).model
     mod.eval()
     while True:
         try:
