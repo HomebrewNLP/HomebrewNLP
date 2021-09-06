@@ -19,8 +19,8 @@ class Dataset(torch.utils.data.Dataset):
         batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
         item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
         self.batch_index = batch_index + item_index
-        self.length = self.data.size(0) // ctx.model.sequence_length // ctx.model.batch_size - 1
-        self.step_size = ctx.model.batch_size * ctx.model.sequence_length
+        self.length = self.data.size(0) // ctx.model.sequence_length - ctx.model.batch_size
+        self.step_size = ctx.model.sequence_length
 
     def __len__(self):
         return self.length
@@ -30,10 +30,10 @@ class Dataset(torch.utils.data.Dataset):
 
 
 def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
-    if ctx.dataset.prefetch_factor < ctx.dataset.shuffle:
+    if ctx.dataset.prefetch_factor < ctx.dataset.num_workers:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
-    return torch.utils.data.DataLoader(Dataset(ctx), 1, ctx.dataset.shuffle,
+    return torch.utils.data.DataLoader(Dataset(ctx), 1, True,
                                        num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
                                        pin_memory=ctx.dataset.pin_memory, prefetch_factor=ctx.dataset.prefetch_factor)
