@@ -78,11 +78,16 @@ def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tens
             drop_conv(inp, w_gate, dropout_probability, training, groups, False))
 
 
+def split_norm(inp: torch.Tensor) -> torch.Tensor:
+    scale0, scale1, shift = inp.chunk(3, 1)
+    return norm(scale0 * scale1 + shift)
+
+
 @torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
-                     init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool, groups: int,
+                     init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool,
                      caching: bool, idx: int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
@@ -93,11 +98,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size + 1:].detach()
     loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
-    inp = torch.relu(inp)
-    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
-    inp = torch.relu(inp)
-    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
-    depth, scale, shift = inp.chunk(groups, 1)
+    depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
     if not training and caching:
         cum = cum + cumsum_cache
@@ -106,17 +107,21 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         cum = cum[:, :, -1:]
         if idx - 1 > kernel_size:
             cumsum_cache = cum.detach()
-    return loss0, loss1, input_cache, cumsum_cache, norm(cum / divisor * scale + shift) * init_scale
+    inp = norm(cum / divisor * scale + shift)
+    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
+    inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
+    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
+    return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
 
 
 def get_coupling(beta_tmp: float):
     @torch.jit.script
     def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return other_stream * beta + fn_out * (1 - beta)
+        return other_stream * beta + fn_out
 
     @torch.jit.script
     def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return (output - fn_out * (1 - beta)) / beta
+        return (output - fn_out) / beta
 
     def _wrapped_momentum_coupling_forward(x, y):
         return momentum_coupling_forward(x, y, beta_tmp)
@@ -282,21 +287,20 @@ class LinearAttentionCell(torch.nn.Module):
         self.init_scale = init_scale
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
-        self.groups = 3  # number of splits in ff
         self.dropout_probability = 1 - ctx.model.dropout_probability
         self.bottleneck_group = ctx.model.bottleneck_group
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
         experts = ctx.model.moe.num_experts
         moe_in_output = ctx.model.moe.use_in_output
         moe_in_input = ctx.model.moe.use_in_input
-        param0 = ParameterStore(orthonormal([ctx.model.features, intermediate], ctx.model.activation_std))
-        param2 = ParameterStore(orthonormal([intermediate, self.groups * ctx.model.features], 1))
-        self.w0_gate = conv_weight(ctx.model.features, experts if moe_in_input else intermediate, 1, 1, 1)
+        param0 = ParameterStore(orthonormal([ctx.model.features, intermediate * 3], ctx.model.activation_std))
+        param2 = ParameterStore(orthonormal([intermediate, ctx.model.features], 1))
+        self.w0_gate = conv_weight(ctx.model.features, experts if moe_in_input else (3 * intermediate), 1, 1, 1)
         self.w0 = torch.nn.ModuleList([copy.deepcopy(param0) for _ in range(experts * moe_in_input)])
-        self.w1 = conv_weight(intermediate, intermediate, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
+        self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
-        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else (ctx.model.features * self.groups), 1,
-                                   1, 1)
+        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features ,
+                                   1, 1, 1)
         self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
@@ -329,7 +333,7 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.init_scale,
                                                                                     self.bottleneck_group,
                                                                                     self.dropout_probability,
-                                                                                    self.training, self.groups,
-                                                                                    self.caching, self.idx)
+                                                                                    self.training, self.caching,
+                                                                                    self.idx)
         AuxLoss.apply(loss0 + loss1)
         return out
