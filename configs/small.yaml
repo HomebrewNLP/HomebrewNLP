@@ -10,7 +10,7 @@ optimizer:
   one_cycle:
     cycle_first_step_size: 8192
     cycle_second_step_size: null
-    cycle_max_lr: 0.01
+    cycle_max_lr: 0.001
 log:
   loss_steps_per_print: 8
 dataset:

@@ -14,7 +14,9 @@ std::vector<torch::Tensor> norm_backward(torch::Tensor out,
                                          torch::Tensor chunk1,
                                          torch::Tensor std,
                                          torch::Tensor d_out) {
-    d_out = (d_out - torch::leaky_relu(out, 1 / 0.02)  * d_out.mean(1, true)) * std;
+    d_out = torch::leaky_relu(d_out, 0.02);
+    out = torch::leaky_relu(out, 1 / 0.02);
+    d_out = (d_out - out * (d_out * out).mean(1, true)) * std;
     d_out -= d_out.mean(1, true);
     return {d_out * chunk1, d_out * chunk0, d_out};
 }
