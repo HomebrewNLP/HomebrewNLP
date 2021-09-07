@@ -107,7 +107,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         cum = cum[:, :, -1:]
         if idx - 1 > kernel_size:
             cumsum_cache = cum.detach()
-    inp = norm(cum / divisor * scale + shift)
+    inp = torch.nn.functional.leaky_relu(norm(cum / divisor * scale + shift), 0.02)
     inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
     inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
     loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
