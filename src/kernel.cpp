@@ -27,8 +27,8 @@ std::vector<torch::Tensor> _forward(torch::Tensor x1,
     x1 = torch::conv1d(x1, w0);
     std::vector<torch::Tensor> chunks = x1.chunk(3, 1);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    torch::Tensor divisor = torch::arange(x1.size(1), opt).unsqueeze(0).unsqueeze(2);
-    chunks[0] = torch::cumsum(chunks[0], 1) / divisor;
+    torch::Tensor divisor = torch::arange(x1.size(2), opt).unsqueeze(0).unsqueeze(0);
+    chunks[0] = torch::cumsum(chunks[0], 2) / divisor;
     std::vector<torch::Tensor> intermediate0 = norm(chunks);
     at::IntArrayRef pad = {w1.size(2) - 1, 0};
     x1 = torch::conv1d(torch::constant_pad_nd(intermediate0[0], pad), w1);

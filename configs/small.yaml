@@ -2,7 +2,7 @@ model:
   depth: 32
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 1024
+  batch_size: 256
   feed_forward_intermediate_factor: 0.125
 optimizer:
   beta2: 0.95

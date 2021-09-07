@@ -2,16 +2,15 @@ import copy
 import typing
 
 import numpy as np
-import revlib
 import torch
 import torch.nn.functional
 import torch.utils.data
-
 from deepspeed.runtime import lr_schedules
-from src.dataclass import Context
 from torch.utils.cpp_extension import load
 
-kernel = load(name="kernel", sources=["kernel.cpp"], verbose=True)
+from src.dataclass import Context
+
+kernel = load(name="kernel", sources=["src/kernel.cpp"], verbose=True)
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
 
@@ -30,69 +29,22 @@ def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter, typing.List[
     return original_input
 
 
-def norm(out: torch.Tensor) -> torch.Tensor:
-    out = out - out.mean(1, keepdim=True)
-    return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
+class ModelFn(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x0: torch.Tensor, back_x0: torch.Tensor, x1: torch.Tensor, back_x1: torch.Tensor,
+                w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor
+                ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        ctx.save_for_backward(w0, w1, w2)
+        f = kernel.forward(x0, x1, w0, w1, w2)
+        return x1, back_x0, f, back_x1
 
-
-def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
-        gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    out = torch.nn.functional.conv1d(inp, gate)
-    gates = torch.nn.functional.softmax(out, dim=1)
-    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1])
-    gumbel = one_hot.transpose(1, 2) - gates.detach() + gates
-    one_hot = one_hot.to(dtype=torch.bool)
-    inp_t = inp.transpose(1, 2)
-    batch, features, sequence = inp.size()
-    out = torch.empty((batch * sequence, w[0].size(1)), device=inp.device, dtype=inp.dtype)
-    for expert, g, param in zip(one_hot.unbind(-1), gumbel.unbind(1), w):
-        tmp = torch.masked_select(inp_t * g.unsqueeze(2), expert.unsqueeze(2)).view(-1, features).mm(param)
-        out = out.masked_scatter(expert.view(-1, 1), tmp)
-    loss = torch.sum(torch.mean(gates, dim=(0, 2)) * torch.mean(one_hot.float(), dim=(0, 1)))
-    return loss, out.view(batch, sequence, -1).transpose(1, 2)
-
-
-def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor]) -> typing.Tuple[
-    torch.Tensor, torch.Tensor]:
-    if w:
-        return moe(inp, w, w_gate)
-    return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
-            conv(inp, w_gate, 1, False))
-
-
-def split_norm(inp: torch.Tensor) -> torch.Tensor:
-    scale0, scale1, shift = inp.chunk(3, 1)
-    return norm(scale0 * scale1 + shift)
-
-
-def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor, w1: torch.Tensor,
-                     w2_gate: torch.Tensor) -> torch.Tensor:
-    inp = torch.nn.functional.conv1d(inp, w0_gate)
-    depth, scale, shift = inp.chunk(3, 1)
-    cum = depth.cumsum(-1)
-    inp = torch.nn.functional.leaky_relu(norm(cum / divisor * scale + shift), 0.02)
-    inp = torch.nn.functional.conv1d(torch.nn.functional.pad(inp, (10, 0)), w1)
-    inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
-    inp = torch.nn.functional.conv1d(inp, w2_gate)
-    return inp
-
-revlib.additive_coupling_inverse()
-def get_coupling(beta_tmp: float):
-    @torch.jit.script
-    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return other_stream * beta + fn_out
-
-    @torch.jit.script
-    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return (output - fn_out) / beta
-
-    def _wrapped_momentum_coupling_forward(x, y):
-        return momentum_coupling_forward(x, y, beta_tmp)
-
-    def _wrapped_momentum_coupling_inverse(x, y):
-        return momentum_coupling_inverse(x, y, beta_tmp)
-
-    return _wrapped_momentum_coupling_forward, _wrapped_momentum_coupling_inverse
+    @staticmethod
+    def backward(ctx, dy0: torch.Tensor, x1: torch.Tensor, dy1: torch.Tensor, y1: torch.Tensor
+                 ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+                                   torch.Tensor]:
+        w0, w1, w2 = ctx.saved_tensors
+        x0, w0, w1, w2, dx0 = kernel.backward(y1, x1, dy1, w0, w1, w2)
+        return dy1, x0, dx0 + dy0, x1, w0, w1, w2
 
 
 def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
@@ -178,20 +130,16 @@ class LinearAttention(torch.nn.Module):
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
-        momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         cell = LinearAttentionCell(self, ctx, init_scale)
-        self.stem = revlib.ReversibleSequential(*([layer
-                                                   for _ in range(ctx.model.depth)
-                                                   for layer in [copy.deepcopy(cell), torch.nn.Identity()]]),
-                                                coupling_forward=[momentum_coupling_forward,
-                                                                  revlib.additive_coupling_forward],
-                                                coupling_inverse=[momentum_coupling_inverse,
-                                                                  revlib.additive_coupling_inverse])
+        self.stem = torch.nn.Sequential(*[copy.deepcopy(cell) for _ in range(ctx.model.depth)])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
-        return self.output(self.stem(self.embedding(inp).transpose(1, 2)))
+        x0, x1 = self.embedding(inp).transpose(1, 2).chunk(2, 1)
+        zeros = torch.zeros_like(x0)
+        x0, _, x1, _ = self.stem((x0, zeros, x1, zeros))
+        return self.output(torch.cat([x0, x1], 1))
 
     def reset_cache(self):
         for mod in self.stem.modules():
@@ -276,17 +224,8 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        if self.training:
-            div = self.divisor()
-        elif self.caching:
-            self.idx += inp.size(2)
-            div = torch.LongTensor([self.idx]).to(inp.device)
-        else:
-            self.idx = inp.size(2)
-            div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
-
-        return linear_attention[0](inp,
-                                   div,
-                                   offload(self.w0_gate, inp),
-                                   offload(self.w1, inp),
-                                   offload(self.w2_gate, inp))
+        x0, back_x0, x1, back_x1 = inp
+        return ModelFn.apply(x0, back_x0, x1, back_x1,
+                             offload(self.w0_gate, x0),
+                             offload(self.w1, x0),
+                             offload(self.w2_gate, x0))
