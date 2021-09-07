@@ -42,8 +42,8 @@ class ModelFn(torch.autograd.Function):
                  ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
                                    torch.Tensor]:
         w0, w1, w2 = ctx.saved_tensors
-        x0, w0, w1, w2, dx0 = kernel.backward(y1, x1, dy1, w0, w1, w2)
-        return dy1, x0, dx0 + dy0, x1, w0, w1, w2
+        x0, w0, w1, w2, dx0 = kernel.backward(y1, x1, dy0, dy1, w0, w1, w2)
+        return dy1, x0, dx0, x1, w0, w1, w2
 
 
 def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
@@ -137,7 +137,7 @@ class LinearAttention(torch.nn.Module):
     def forward(self, inp: torch.Tensor):
         x0, x1 = self.embedding(inp).transpose(1, 2).chunk(2, 1)
         zeros = torch.zeros_like(x0)
-        x0, _, x1, _ = self.stem((x0, zeros, x1, zeros))
+        x0, x1 = revlib.replace_grad(*self.stem((x0, zeros, x1, zeros)))
         return self.output(torch.cat([x0, x1], 1))
 
     def reset_cache(self):
