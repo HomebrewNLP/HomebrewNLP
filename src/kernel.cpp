@@ -20,7 +20,7 @@ std::vector<torch::Tensor> norm_backward(torch::Tensor out,
 }
 
 
-std::vector<torch::Tensor> forward(torch::Tensor x1,
+std::vector<torch::Tensor> _forward(torch::Tensor x1,
                                    torch::Tensor w0,
                                    torch::Tensor w1,
                                    torch::Tensor w2) {
@@ -36,7 +36,7 @@ std::vector<torch::Tensor> forward(torch::Tensor x1,
     x1 = torch::conv1d(intermediate1[0], w2);
     intermediate0.insert(intermediate0.end(), intermediate1.begin(), intermediate1.end());
     intermediate0.push_back(x1);
-    return intermediate0
+    return intermediate0;
 }
 
 
@@ -45,7 +45,7 @@ torch::Tensor forward(torch::Tensor x0,
                       torch::Tensor w0,
                       torch::Tensor w1,
                       torch::Tensor w2) {
-    std::vector<torch::Tensor> out = forward(x1, w0, w1, w2);
+    std::vector<torch::Tensor> out = _forward(x1, w0, w1, w2);
     return out[8] + x0;
 }
 
@@ -55,7 +55,7 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
                                     torch::Tensor w0,
                                     torch::Tensor w1,
                                     torch::Tensor w2) {
-    std::vector<torch::Tensor> out = forward(x1, w0, w1, w2);
+    std::vector<torch::Tensor> out = _forward(x1, w0, w1, w2);
     torch::Tensor intermediate0 = out[0];
     torch::Tensor chunk00 = out[1];
     torch::Tensor chunk01 = out[2];
@@ -64,20 +64,26 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
     torch::Tensor chunk10 = out[5];
     torch::Tensor chunk11 = out[6];
     torch::Tensor std1 = out[7];
-
+    int batch = x1.size(0);
+    int sequence = x1.size(2);
+    int features = w1.size(1);
+    int kernel = w1.size(2);
     torch::Tensor d_tmp = torch::conv1d(dy, w2.transpose(0, 1));
-    d_tmp = torch::cat(norm_backward(intermediate1, chunk10, chunk11, std1,
-                                     d_tmp), 1);
-    at::IntArrayRef pad = {w1.size(2) - 1, 0};
-    d_tmp = torch::conv1d(torch::constant_pad_nd(d_tmp, pad), w1.transpose(0, 1));
+    w2 = torch::einsum("boh,bih->oi", {dy, intermediate1}).unsqueeze_(0);
+    d_tmp = torch::cat(norm_backward(intermediate1, chunk10, chunk11, std1, d_tmp), 1);
+    at::IntArrayRef pad = {kernel - 1, 0};
+    d_tmp = torch::constant_pad_nd(d_tmp, pad);
+    torch::Tensor tmp = intermediate0.view({batch, features, sequence}).transpose_(0, 1);
+    torch::Tensor d_w1 = torch::conv2d(d_tmp.view({1, batch, features, sequence + kernel}), tmp);
+    d_tmp = torch::conv1d(d_tmp, w1.transpose(0, 1));
     std::vector<torch::Tensor> d_norm = norm_backward(intermediate0, chunk00, chunk01, std0,
                                                       d_tmp);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    torch::Tensor divisor = torch::arange(x1.size(1), opt).unsqueeze(0).unsqueeze(2);
-    d_norm[0] = d_norm[0].cumsum(1) / divisor;
+    d_norm[0] = d_norm[0].cumsum(2) / torch::arange(sequence, opt).view({1, 1, sequence});
     d_tmp = torch::cat(d_norm, 1);
+    torch::Tensor d_w0 = torch::einsum("boh,bih->oi", {d_tmp, x1}).unsqueeze_(0);
     d_tmp = torch::conv1d(d_tmp, w0.transpose(0, 1));
-    return {y1 - out[8], d_tmp};
+    return {y1 - out[8], d_w0, d_w1.squeeze(0), w2, d_tmp};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
