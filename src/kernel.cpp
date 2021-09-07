@@ -10,7 +10,6 @@ std::vector<torch::Tensor> norm(std::vector<torch::Tensor> chunks) {
     std += 1e-5;
     std /= sqrt(inp.size(1));
     std.reciprocal_();
-    // torch::Tensor std =  / (1e-5 + torch::norm(inp, 2, 1, true));
     inp *= std;
     return {torch::leaky_relu(inp, 0.02), chunks[0], chunks[1], std};
 }
@@ -23,8 +22,8 @@ std::vector<torch::Tensor> norm_backward(torch::Tensor out,
     d_out = torch::leaky_relu(d_out, 0.02);
     out = torch::leaky_relu(out, 1 / 0.02);
     d_out = d_out - d_out.mean(1, true);
-    d_out -= out / std * (out * d_out).mean(1, true);
-    d_out /= std;
+    d_out -= out * std * (out * d_out).mean(1, true);
+    d_out *= std;
     chunk1 *= d_out;
     chunk0 *= d_out;
     return {chunk1, chunk0, d_out};
