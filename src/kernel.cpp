@@ -29,7 +29,7 @@ std::vector<torch::Tensor> _forward(torch::Tensor x1,
     x1 = torch::conv1d(x1, w0);
     std::vector<torch::Tensor> chunks = x1.chunk(3, 1);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    torch::Tensor divisor = torch::arange(x1.size(2), opt).unsqueeze(0).unsqueeze(0);
+    torch::Tensor divisor = torch::arange(x1.size(2), opt).unsqueeze(0).unsqueeze(0) + 1;
     chunks[0] = torch::cumsum(chunks[0], 2) / divisor;
     std::vector<torch::Tensor> intermediate0 = norm(chunks);
     at::IntArrayRef pad = {w1.size(2) - 1, 0};
@@ -80,7 +80,7 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
     d_tmp = torch::conv1d(d_tmp, w1.transpose(0, 1));
     std::vector<torch::Tensor> d_norm = norm_backward(intermediate0, chunk00, chunk01, std0, d_tmp);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    d_norm[0] = d_norm[0].cumsum(2) / torch::arange(sequence, opt).view({1, 1, sequence});
+    d_norm[0] = d_norm[0].cumsum(2) / torch::arange(sequence, opt).view({1, 1, sequence}).add(1);
     d_tmp = torch::cat(d_norm, 1);
     torch::Tensor d_w0 = torch::einsum("boh,bih->oi", {d_tmp, x1}).unsqueeze_(2);
     d_tmp = torch::conv1d(d_tmp, w0.transpose(0, 1));
