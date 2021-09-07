@@ -2,11 +2,17 @@
 
 #include <vector>
 
+
 std::vector<torch::Tensor> norm(std::vector<torch::Tensor> chunks) {
     torch::Tensor inp = chunks[0] * chunks[1] + chunks[2];
     inp -= inp.mean(1, true);
-    torch::Tensor std = sqrt(inp.size(1)) / (1e-5 + torch::norm(inp, 2, 1, true));
-    return {torch::leaky_relu(inp * std, 0.02), chunks[0], chunks[1], std};
+    torch::Tensor std = torch::norm(inp, 2, 1, true);
+    std += 1e-5;
+    std /= sqrt(inp.size(1));
+    std.reciprocal_();
+    // torch::Tensor std =  / (1e-5 + torch::norm(inp, 2, 1, true));
+    inp *= std;
+    return {torch::leaky_relu(inp, 0.02), chunks[0], chunks[1], std};
 }
 
 std::vector<torch::Tensor> norm_backward(torch::Tensor out,
@@ -16,9 +22,12 @@ std::vector<torch::Tensor> norm_backward(torch::Tensor out,
                                          torch::Tensor d_out) {
     d_out = torch::leaky_relu(d_out, 0.02);
     out = torch::leaky_relu(out, 1 / 0.02);
-    d_out = d_out - d_out.mean(1, true) - out / std * (out * d_out).mean(1, true);
+    d_out = d_out - d_out.mean(1, true);
+    d_out -= out / std * (out * d_out).mean(1, true);
     d_out /= std;
-    return {d_out * chunk1, d_out * chunk0, d_out};
+    chunk1 *= d_out;
+    chunk0 *= d_out;
+    return {chunk1, chunk0, d_out};
 }
 
 
@@ -29,8 +38,9 @@ std::vector<torch::Tensor> _forward(torch::Tensor x1,
     x1 = torch::conv1d(x1, w0);
     std::vector<torch::Tensor> chunks = x1.chunk(3, 1);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    torch::Tensor divisor = torch::arange(x1.size(2), opt).unsqueeze(0).unsqueeze(0) + 1;
-    chunks[0] = torch::cumsum(chunks[0], 2) / divisor;
+    torch::Tensor divisor = torch::arange(1, 1 + x1.size(2), opt).unsqueeze(0).unsqueeze(0);
+    chunks[0] = torch::cumsum(chunks[0], 2);
+    chunks[0] /= divisor;
     std::vector<torch::Tensor> intermediate0 = norm(chunks);
     at::IntArrayRef pad = {w1.size(2) - 1, 0};
     x1 = torch::conv1d(torch::constant_pad_nd(intermediate0[0], pad), w1);
@@ -80,11 +90,13 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
     d_tmp = torch::conv1d(d_tmp, w1.transpose(0, 1));
     std::vector<torch::Tensor> d_norm = norm_backward(intermediate0, chunk00, chunk01, std0, d_tmp);
     at::TensorOptions opt = at::TensorOptions(x1.dtype()).device(x1.device());
-    d_norm[0] = d_norm[0].cumsum(2) / torch::arange(sequence, opt).view({1, 1, sequence}).add(1);
+    d_norm[0] = d_norm[0].cumsum(2);
+    d_norm[0] /= torch::arange(1, 1 + sequence, opt).view({1, 1, sequence});
     d_tmp = torch::cat(d_norm, 1);
     torch::Tensor d_w0 = torch::einsum("boh,bih->oi", {d_tmp, x1}).unsqueeze_(2);
     d_tmp = torch::conv1d(d_tmp, w0.transpose(0, 1));
-    return {y1 - out[8], d_w0, d_w1.squeeze(0).transpose_(0, 1), w2, d_tmp};
+    y1 -= out[8];
+    return {y1, d_w0, d_w1.squeeze_(0).transpose_(0, 1), w2, d_tmp};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {

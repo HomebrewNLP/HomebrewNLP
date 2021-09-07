@@ -35,8 +35,7 @@ class ModelFn(torch.autograd.Function):
                 w0: torch.Tensor, w1: torch.Tensor, w2: torch.Tensor
                 ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         ctx.save_for_backward(w0, w1, w2)
-        f = kernel.forward(x0, x1, w0, w1, w2)
-        return x1, back_x0, f, back_x1
+        return x1, back_x0, kernel.forward(x0, x1, w0, w1, w2), back_x1
 
     @staticmethod
     def backward(ctx, dy0: torch.Tensor, x1: torch.Tensor, dy1: torch.Tensor, y1: torch.Tensor
