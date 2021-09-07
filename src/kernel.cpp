@@ -5,7 +5,7 @@
 std::vector<torch::Tensor> norm(std::vector<torch::Tensor> chunks) {
     torch::Tensor inp = chunks[0] * chunks[1] + chunks[2];
     inp -= inp.mean(1, true);
-    torch::Tensor std = 1 / (torch::norm(inp, 2, 1, true) * sqrt(1 / inp.size(1)) + 1e-5);
+    torch::Tensor std = sqrt(inp.size(1)) / (1e-5 + torch::norm(inp, 2, 1, true));
     return {torch::leaky_relu(inp * std, 0.02), chunks[0], chunks[1], std};
 }
 
