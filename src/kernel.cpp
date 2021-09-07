@@ -21,8 +21,10 @@ std::vector<torch::Tensor> norm_backward(torch::Tensor out,
                                          torch::Tensor d_out) {
     d_out = torch::leaky_relu(d_out, 0.02);
     out = torch::leaky_relu(out, 1 / 0.02);
-    d_out = d_out - d_out.mean(1, true);
-    d_out -= out * std * (out * d_out).mean(1, true);
+    out *= (out * d_out).mean(1, true);
+    out *= std;
+    d_out -= d_out.mean(1, true);
+    d_out -= out;
     d_out *= std;
     chunk1 *= d_out;
     chunk0 *= d_out;
@@ -62,11 +64,14 @@ torch::Tensor forward(torch::Tensor x0,
 
 std::vector<torch::Tensor> backward(torch::Tensor y1,
                                     torch::Tensor x1,
-                                    torch::Tensor dy,
+                                    torch::Tensor dy0,
+                                    torch::Tensor dy1,
                                     torch::Tensor w0,
                                     torch::Tensor w1,
                                     torch::Tensor w2) {
     std::vector<torch::Tensor> out = _forward(x1, w0, w1, w2);
+    y1 -= out[8];
+
     torch::Tensor intermediate0 = out[0];
     torch::Tensor chunk00 = out[1];
     torch::Tensor chunk01 = out[2];
@@ -79,8 +84,8 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
     int sequence = x1.size(2);
     int features = w1.size(1);
     int kernel = w1.size(2);
-    torch::Tensor d_tmp = torch::conv1d(dy, w2.transpose(0, 1));
-    w2 = torch::einsum("boh,bih->oi", {dy, intermediate1}).unsqueeze_(2);
+    torch::Tensor d_tmp = torch::conv1d(dy1, w2.transpose(0, 1));
+    w2 = torch::einsum("boh,bih->oi", {dy1, intermediate1}).unsqueeze_(2);
     d_tmp = torch::cat(norm_backward(intermediate1, chunk10, chunk11, std1, d_tmp), 1);
     at::IntArrayRef pad = {kernel - 1, 0};
     d_tmp = torch::constant_pad_nd(d_tmp, pad);
@@ -94,8 +99,7 @@ std::vector<torch::Tensor> backward(torch::Tensor y1,
     d_tmp = torch::cat(d_norm, 1);
     torch::Tensor d_w0 = torch::einsum("boh,bih->oi", {d_tmp, x1}).unsqueeze_(2);
     d_tmp = torch::conv1d(d_tmp, w0.transpose(0, 1));
-    y1 -= out[8];
-    return {y1, d_w0, d_w1.squeeze_(0).transpose_(0, 1), w2, d_tmp};
+    return {y1, d_w0, d_w1.squeeze_(0).transpose_(0, 1), w2, d_tmp.add_(dy0)};
 }
 
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
