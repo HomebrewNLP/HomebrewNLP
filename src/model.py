@@ -7,7 +7,7 @@ import torch.nn.functional
 import torch.utils.data
 from deepspeed.runtime import lr_schedules
 from torch.utils.cpp_extension import load
-
+import revlib
 from src.dataclass import Context
 
 kernel = load(name="kernel", sources=["src/kernel.cpp"], verbose=True)
