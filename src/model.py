@@ -215,15 +215,8 @@ class LinearAttention(torch.nn.Module):
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
-        momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
         cell = LinearAttentionCell(self, ctx, init_scale)
-        self.stem = revlib.ReversibleSequential(*([layer
-                                                   for _ in range(ctx.model.depth)
-                                                   for layer in [copy.deepcopy(cell), torch.nn.Identity()]]),
-                                                coupling_forward=[momentum_coupling_forward,
-                                                                  revlib.additive_coupling_forward],
-                                                coupling_inverse=[momentum_coupling_inverse,
-                                                                  revlib.additive_coupling_inverse])
+        self.stem = revlib.ReversibleSequential(*[copy.deepcopy(cell) for _ in range(ctx.model.depth)])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
