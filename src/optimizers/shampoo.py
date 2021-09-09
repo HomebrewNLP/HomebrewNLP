@@ -33,44 +33,11 @@ import torch.optim as optim
 
 from src.utils.matrix_functions import ComputePower
 
-# Grafting is a technique to fix the layerwise scale of Shampoo optimizer.
-# https://arxiv.org/pdf/2002.11803.pdf studies this in detail. This
-# allows us to plugin the Shampoo optimizer into settings where SGD/AdaGrad
-# is already well tuned. Grafting onto Shampoo means take the Shampoo direction,
-# but use the step magnitude from the grafted optimizer such as Adagrad or SGD.
+
 class LayerwiseGrafting(enum.IntEnum):
   NONE = 0
   SGD = 1
   ADAGRAD = 2
-
-
-@dataclass
-class ShampooHyperParams:
-  """Shampoo hyper parameters."""
-  beta2: float = 0.99
-  diagonal_eps: float = 1e-6
-  matrix_eps: float = 1e-12
-  weight_decay: float = 0.0
-  inverse_exponent_override: int = 0  # fixed exponent for preconditioner, if >0
-  start_preconditioning_step: int = 16
-  # Performance tuning params for controlling memory and compute requirements.
-  # How often to compute preconditioner.
-  preconditioning_compute_steps: int = 1 
-  # How often to compute statistics.
-  statistics_compute_steps: int = 1
-  # Block size for large layers (if > 0).
-  # Block size = 1 ==> Adagrad (Don't do this, extremely inefficient!)
-  # Block size should be as large as feasible under memory/time constraints.
-  block_size: int = 128
-  # Automatic shape interpretation (for eg: [4, 3, 1024, 512] would result in
-  # 12 x [1024, 512] L and R statistics. Disabled by default which results in
-  # Shampoo constructing statistics [4, 4], [3, 3], [1024, 1024], [512, 512].
-  best_effort_shape_interpretation: bool = True
-  # Type of grafting (SGD or AdaGrad).
-  # https://arxiv.org/pdf/2002.11803.pdf
-  graft_type: int = LayerwiseGrafting.ADAGRAD
-  # Nesterov momentum
-  nesterov: bool = True
 
 
 class Graft:
@@ -310,7 +277,42 @@ GRAFT = 'graft'
 
 
 class Shampoo(optim.Optimizer):
-  """The Shampoo optimizer."""
+    """The Shampoo optimizer, configured for use in the
+    HomebrewNLP linear attention model. This class is
+    passed model parameters and an input context loaded
+    from the model config which controls all relevant
+    hyper-parameters. See "/configs/shampoo.yaml" for an
+    example Shampoo config.
+
+    Configurable Hyperparameters and default values:
+        beta2: float = 0.99
+        diagonal_eps: float = 1e-6
+        matrix_eps: float = 1e-12
+        weight_decay: float = 0.0
+        inverse_exponent_override: int = 0  # fixed exponent
+                        for preconditioner, if >0
+        start_preconditioning_step - Performance tuning params
+                        for controlling memory & compute.
+        preconditioning_compute_steps - How often to compute
+                        preconditioner.
+        statistics_compute_steps: int = 1 - How often to
+                        compute statistics.
+        block_size: int = 128 - Block size for large
+                        layers (if > 0). Block size = 1
+                        is equivalent to Adagrad (but is
+                        extremely inefficient!)
+                        Block size should be as large as
+                        feasible under memory/time
+                        constraints.
+        best_effort_shape_interpretation: bool = True -
+                        Automatic shape interpretation
+                        (for eg: [4, 3, 1024, 512] would
+                        result in 12 x [1024, 512] L
+                        and R statistics.
+        graft_type: int = LayerwiseGrafting.ADAGRAD -
+                        Type of grafting (SGD or AdaGrad).
+        nesterov: bool = True
+  """
 
   def __init__(self, params,
                ctx=None):
