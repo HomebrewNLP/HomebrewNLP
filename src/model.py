@@ -208,25 +208,30 @@ class Trainer(torch.nn.Module):
                     raise ValueError(f"{key} is missing in model but exists in checkpoint")
 
 
+class MomentumNetSide(torch.nn.Module):
+    def __init__(self, beta: float):
+        super(MomentumNetSide, self).__init__()
+        self.beta = beta
+
+    def forward(self, inp: torch.Tensor):
+        return inp * self.beta
+
+
 class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
         orthonormal(self.embedding.weight, ctx.model.input_embedding_std * 2 ** -0.5)
 
-        init_scale = ctx.model.depth ** -0.5
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
-        momentum_coupling_forward, momentum_coupling_inverse = get_coupling(ctx.model.momentumnet_beta)
-        cell = LinearAttentionCell(self, ctx, init_scale)
-        self.stem = revlib.ReversibleSequential(*([layer
-                                                   for _ in range(ctx.model.depth)
-                                                   for layer in [copy.deepcopy(cell), torch.nn.Identity()]]),
-                                                coupling_forward=[momentum_coupling_forward,
-                                                                  revlib.additive_coupling_forward],
-                                                coupling_inverse=[momentum_coupling_inverse,
-                                                                  revlib.additive_coupling_inverse])
+        self.stem = revlib.ReversibleSequential(*[c
+                                                  for i in range(1, 1 + ctx.model.depth)
+                                                  for c in [LinearAttentionCell(self, ctx,
+                                                                                (1 - ctx.model.momentumnet_beta) /
+                                                                                ctx.model.momentumnet_beta ** i),
+                                                            MomentumNetSide(ctx.model.momentumnet_beta ** i)]])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
@@ -302,7 +307,7 @@ class LinearAttentionCell(torch.nn.Module):
         self.w0 = torch.nn.ModuleList([copy.deepcopy(param0) for _ in range(experts * moe_in_input)])
         self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
-        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features ,
+        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features,
                                    1, 1, 1)
         self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
