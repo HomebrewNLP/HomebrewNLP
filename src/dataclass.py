@@ -4,6 +4,8 @@ import typing
 import torch
 import yaml
 
+from src.optimizers.shampoo import LayerwiseGrafting
+
 
 class DataClass:
     def serialize(self):
@@ -122,6 +124,18 @@ class Optimizer(DataClass):
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
 
+    #Shampoo hyper-params
+    momentum: float = 0.9
+    diagonal_eps: float = 1e-6
+    matrix_eps: float = 1e-12
+    inverse_exponent_override: int = 0
+    start_preconditioning_step: int = 16
+    preconditioning_compute_steps: int = 1
+    statistics_compute_steps: int = 1
+    block_size: int = 128
+    best_effort_shape_interpretation: bool = True
+    graft_type: int = LayerwiseGrafting.ADAGRAD
+    nesterov: bool = True
 
 class Eval(DataClass):
     cache: bool = False

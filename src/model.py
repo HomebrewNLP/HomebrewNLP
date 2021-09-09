@@ -9,6 +9,7 @@ import torch.utils.data
 from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
+from src.optimizers.build import build_optimizer
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
@@ -141,7 +142,8 @@ class Trainer(torch.nn.Module):
         super(Trainer, self).__init__()
         self.ctx = ctx
         self.model = model
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=ctx.optimizer.weight_decay)
+        self.optimizer = build_optimizer(ctx, self.model.parameters())
+        # self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=ctx.optimizer.weight_decay)
         self.scheduler = lr_schedules.OneCycle(self.optimizer,
                                                ctx.optimizer.one_cycle.cycle_min_lr,
                                                ctx.optimizer.one_cycle.cycle_max_lr,
@@ -156,6 +158,7 @@ class Trainer(torch.nn.Module):
                                                ctx.optimizer.one_cycle.cycle_max_mom,
                                                ctx.optimizer.one_cycle.decay_mom_rate,
                                                ctx.optimizer.one_cycle.last_batch_iteration)
+
 
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
