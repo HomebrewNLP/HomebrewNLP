@@ -26,7 +26,7 @@ def build_optimizer(ctx: Context, parameters: typing.List[torch.nn.Parameter]):
             assert torch.optim.Optimizer in inspect.getmro(optm)
             params = {'params':parameters}
             for key, value in inspect.signature(optm).parameters.items():
-                if key in ctx_.optimizer:
+                if key in ctx.optimizer:
                     params[key]=getattr(ctx.optimizer,key)
             return optm(**params)
         except Exception as e:
