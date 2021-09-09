@@ -55,7 +55,8 @@ def merge_small_dims(var_shape, reshape_size):
         if product * d <= reshape_size:
             product *= d
         else:
-            if product > 1: shape.append(product)
+            if product > 1:
+                shape.append(product)
             product = d
     if product > 1:
         shape.append(product)

@@ -215,7 +215,8 @@ class Preconditioner:
         Args:
           grad: Gradient to compute statistics from.
         """
-        if not self.statistics: return
+        if not self.statistics:
+            return
         reshaped_grad = torch.reshape(grad, self._transformed_shape)
         partitioned_grads = self._partitioner.partition(reshaped_grad)
         w1 = self._hps.beta2
@@ -250,7 +251,8 @@ class Preconditioner:
         Returns:
           A preconditioned gradient.
         """
-        if not self.preconditioners: return grad
+        if not self.preconditioners:
+            return grad
         reshaped_grad = torch.reshape(grad, self._transformed_shape)
         partitioned_grads = self._partitioner.partition(reshaped_grad)
         preconditioned_partitioned_grads = []
@@ -339,7 +341,8 @@ def step(self, closure=None):
     for group in self.param_groups:
         lr = group['lr']
         for p in group['params']:
-            if p.grad is None: continue
+            if p.grad is None:
+                continue
             grad = p.grad.data
             if grad.is_sparse:
                 raise RuntimeError('Shampoo does not support sparse yet')
