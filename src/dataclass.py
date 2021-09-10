@@ -4,8 +4,6 @@ import typing
 import torch
 import yaml
 
-from src.optimizers.shampoo import LayerwiseGrafting
-
 
 class DataClass:
     def serialize(self):
@@ -114,7 +112,7 @@ class SharpnessAwareMinimization(DataClass):
 
 
 class Optimizer(DataClass):
-    type: str = "AdamW"
+    type: str = "adamw"
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
@@ -134,7 +132,7 @@ class Optimizer(DataClass):
     statistics_compute_steps: int = 1
     block_size: int = 128
     best_effort_shape_interpretation: bool = True
-    graft_type: int = LayerwiseGrafting.ADAGRAD
+    graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
     nesterov: bool = True
 
 

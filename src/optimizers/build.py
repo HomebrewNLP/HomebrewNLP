@@ -9,17 +9,17 @@ from src.utils.formatting import log, pretty_print
 from src.dataclass import Context
 
 OPTIMIZERS = {
-    'AdamW': torch.optim.AdamW,
-    'Shampoo': shampoo.Shampoo
+    'adamw': torch.optim.AdamW,
+    'shampoo': shampoo.Shampoo
 }
 
 
 def build_optimizer(ctx: Context, parameters: typing.List[torch.nn.Parameter]):
     name = ctx.optimizer.type
-    optm = OPTIMIZERS.get(name)
-    if name in ['AdamW']:
+    optm = OPTIMIZERS.get(str(name).lower())
+    if str(name).lower() in ['adamw']:
         return optm(params=parameters, weight_decay=ctx.optimizer.weight_decay)
-    if name in ['Shampoo']:
+    if str(name).lower() in ['shampoo']:
         return optm(parameters, ctx=ctx.optimizer)
     try:
         optm = getattr(torch.optim, name)

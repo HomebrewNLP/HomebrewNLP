@@ -34,12 +34,6 @@ import torch.optim as optim
 from src.utils.matrix_functions import ComputePower
 
 
-class LayerwiseGrafting(enum.IntEnum):
-    NONE = 0
-    SGD = 1
-    ADAGRAD = 2
-
-
 class Graft:
     """Base class to perform grafting onto Shampoo. This class does no grafting.
     """
@@ -316,7 +310,7 @@ class Shampoo(optim.Optimizer):
                         (for eg: [4, 3, 1024, 512] would
                         result in 12 x [1024, 512] L
                         and R statistics.
-        graft_type: int = LayerwiseGrafting.ADAGRAD -
+        graft_type: str = 'Adagrad' -
                         Type of grafting (SGD or AdaGrad).
         nesterov: bool = True
     """
@@ -333,9 +327,9 @@ class Shampoo(optim.Optimizer):
         state[STEP] = 0
         state[MOMENTUM] = torch.zeros_like(var.data, device=var.get_device())
         state[PRECONDITIONER] = Preconditioner(var, self.hps)
-        if self.hps.graft_type == LayerwiseGrafting.ADAGRAD:
+        if str(self.hps.graft_type).lower() == 'adagrad':
             state[GRAFT] = AdagradGraft(self.hps, var)
-        elif self.hps.graft_type == LayerwiseGrafting.SGD:
+        elif str(self.hps.graft_type) == 'sgd':
             state[GRAFT] = SGDGraft(self.hps, var)
         else:
             state[GRAFT] = Graft(self.hps, var)
