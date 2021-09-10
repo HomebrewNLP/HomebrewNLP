@@ -319,7 +319,6 @@ class Shampoo(optim.Optimizer):
                     if group[STEP] >= self.hps.start_preconditioning_step:
                         shampoo_grad = preconditioner.preconditioned_grad(grad)
 
-
                 # Grafting
                 graft_grad = grad
                 if self.hps.graft_type == 'adagrad':
