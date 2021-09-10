@@ -52,7 +52,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                 if ctx.optimizer.type != 'Shampoo':
                     log(mean_loss, mod.optimizer.param_groups[0]['lr'], mod.optimizer.param_groups[0]['betas'])
                 else:
-                    stat1=mod.optimizer.state[mod.optimizer.param_groups[0]['params'][0]]['momentum'].sum()
+                    stat1 = mod.optimizer.state[mod.optimizer.param_groups[0]['params'][0]]['momentum'].sum()
                     stat2 = mod.optimizer.param_groups[0]['betas'][1]
                     log(mean_loss, mod.optimizer.param_groups[0]['lr'], [stat1,stat2])
                 mean_loss.zero_()

@@ -30,7 +30,7 @@ import torch
 @torch.no_grad()
 def PowerIter(mat_g, error_tolerance=1e-6, num_iters=100):
     """Power iteration.
-  
+
     Compute the maximum eigenvalue of mat, for scaling.
     v is a random vector with values in (-1, 1)
 

@@ -124,7 +124,7 @@ class Optimizer(DataClass):
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
 
-    #Shampoo hyper-params
+    # Shampoo hyper-params
     momentum: float = 0.9
     diagonal_eps: float = 1e-6
     matrix_eps: float = 1e-12
@@ -136,6 +136,7 @@ class Optimizer(DataClass):
     best_effort_shape_interpretation: bool = True
     graft_type: int = LayerwiseGrafting.ADAGRAD
     nesterov: bool = True
+
 
 class Eval(DataClass):
     cache: bool = False

@@ -81,7 +81,7 @@ def compute_splits(var_shape, block_size):
     splits = []
     split_sizes = []
     for i, d in enumerate(var_shape):
-        if block_size > 0 and d > block_size:
+        if d > block_size > 0:
             nsplit = math.ceil(d / block_size)
             sizes = np.ones(nsplit, dtype=np.int32) * block_size
             if d % block_size > 0:
@@ -98,6 +98,7 @@ def split_grad(state, grad):
     if len(state[VAR_SHAPE]) < len(list(grad.shape)):
         grad = torch.reshape(grad, state[VAR_SHAPE])
     grads = [grad]
+    del(grad)
     for i, split_sizes in state[VAR_SPLITS]:
         split_grads = []
         for grad in grads:
@@ -116,5 +117,6 @@ def merge_grads(state, grads):
             conc_grads.append(torch.cat(grads[ind:ind+n], axis=i))
             ind += n
         grads = conc_grads
-    assert len(grads) == 1
+    if len(grads) != 1:
+        raise ValueError('Grad merge failed.')
     return grads[0]

@@ -40,7 +40,7 @@ class WandbLog:
         self.idx = 0
         self.prev = 0
         self.steps = steps
-        self.metrics = ('Beta1','Beta2') if ctx.optimizer.type!='Shampoo' else ('Momentum','Beta2')
+        self.metrics = ('Beta1', 'Beta2') if ctx.optimizer.type != 'Shampoo' else ('Momentum', 'Beta2')
 
     def __call__(self, current_loss: torch.Tensor, learning_rate: float, betas: typing.Tuple[float, float]):
         grad_accum = self.ctx.optimizer.gradient_accumulation_steps

@@ -48,13 +48,7 @@ class Graft:
         self.hps = hps
 
     def add_statistics(self, grad):
-        pass
-
-    def precondition_gradient(self, grad):
-        return grad
-
-    def update_momentum(self, update, unused_beta1):
-        return update
+        pass #Implemted in Adagrad; pass in SGD
 
 
 class SGDGraft(Graft):
@@ -71,6 +65,10 @@ class SGDGraft(Graft):
         self.momentum.mul_(beta1).add_(update)
         return self.momentum
 
+    @staticmethod
+    def precondition_gradient(grad):
+        return grad
+
 
 class AdagradGraft(SGDGraft):
     """Graft using Adagrad.
@@ -81,6 +79,10 @@ class AdagradGraft(SGDGraft):
     def __init__(self, hps, var):
         super(AdagradGraft, self).__init__(hps, var)
         self.statistics = torch.zeros_like(var.data, device=var.get_device())
+
+    @staticmethod
+    def update_momentum(update, unused_beta1):
+        return update
 
     def add_statistics(self, grad):
         self.statistics.add_(grad * grad)
@@ -130,7 +132,8 @@ class BlockPartitioner:
     def partition(self, tensor):
         """Partition tensor into blocks."""
 
-        assert tensor.shape == self._shape
+        if tensor.shape != self._shape:
+            raise ValueError('Grad shape != var shape. X has shape of {}; Y shape is {}.'.format(str(tensor.shape),str(self._shape)))
         tensors = [tensor]
         for (i, sizes) in self._split_sizes:
             tensors_local = []
@@ -152,7 +155,8 @@ class BlockPartitioner:
                     torch.cat(partitions[ind:ind + n], axis=i))
                 ind += n
             partitions = partial_merged_tensors
-        assert len(partitions) == 1
+        if len(partitions) != 1:
+            raise ValueError('Partition merged failed.')
         return partitions[0]
 
 
@@ -222,6 +226,7 @@ class Preconditioner:
         w1 = self._hps.beta2
         w2 = 1.0 if w1 == 1.0 else (1.0 - w1)
         rank = len(self._transformed_shape)
+        del(grad)
         for j, grad in enumerate(partitioned_grads):
             for i in range(rank):
                 axes = list(range(i)) + list(range(i + 1, rank))
@@ -257,9 +262,10 @@ class Preconditioner:
         partitioned_grads = self._partitioner.partition(reshaped_grad)
         preconditioned_partitioned_grads = []
         num_splits = self._partitioner.num_splits()
+        del(grad)
         for i, grad in enumerate(partitioned_grads):
-            preconditioners_for_grad = self.preconditioners[i * num_splits:(i + 1) *
-                                                                           num_splits]
+            preconditioners_for_grad = self.preconditioners[
+                                       i * num_splits:(i + 1) *num_splits]
             rank = len(grad.shape)
             precond_grad = grad
             for j in range(rank):
@@ -314,82 +320,83 @@ class Shampoo(optim.Optimizer):
         graft_type: int = LayerwiseGrafting.ADAGRAD -
                         Type of grafting (SGD or AdaGrad).
         nesterov: bool = True
-  """
+    """
 
-def __init__(self, params,
-             ctx=None):
-    self.hps = ctx
-    defaults = dict(momentum=self.hps.momentum,
-                    betas=[0,self.hps.beta2],
-                    )
-    super(Shampoo, self).__init__(params, defaults)
 
-def init_var_state(self, var, state):
-    """Initialize the PyTorch state of for a single variable."""
-    state[STEP] = 0
-    state[MOMENTUM] = torch.zeros_like(var.data, device=var.get_device())
-    state[PRECONDITIONER] = Preconditioner(var, self.hps)
-    if self.hps.graft_type == LayerwiseGrafting.ADAGRAD:
-        state[GRAFT] = AdagradGraft(self.hps, var)
-    elif self.hps.graft_type == LayerwiseGrafting.SGD:
-        state[GRAFT] = SGDGraft(self.hps, var)
-    else:
-        state[GRAFT] = Graft(self.hps, var)
+    def __init__(self, params,
+                 ctx=None):
+        self.hps = ctx
+        defaults = dict(momentum=self.hps.momentum,
+                        betas=[0, self.hps.beta2],
+                        )
+        super(Shampoo, self).__init__(params, defaults)
 
-def step(self, closure=None):
-    hps = self.hps
-    for group in self.param_groups:
-        lr = group['lr']
-        for p in group['params']:
-            if p.grad is None:
-                continue
-            grad = p.grad.data
-            if grad.is_sparse:
-                raise RuntimeError('Shampoo does not support sparse yet')
-            state = self.state[p]
-            if not state:
-                self.init_var_state(p, state)
-            state[STEP] += 1
+    def init_var_state(self, var, state):
+        """Initialize the PyTorch state of for a single variable."""
+        state[STEP] = 0
+        state[MOMENTUM] = torch.zeros_like(var.data, device=var.get_device())
+        state[PRECONDITIONER] = Preconditioner(var, self.hps)
+        if self.hps.graft_type == LayerwiseGrafting.ADAGRAD:
+            state[GRAFT] = AdagradGraft(self.hps, var)
+        elif self.hps.graft_type == LayerwiseGrafting.SGD:
+            state[GRAFT] = SGDGraft(self.hps, var)
+        else:
+            state[GRAFT] = Graft(self.hps, var)
 
-            preconditioner = state[PRECONDITIONER]
-            graft = state[GRAFT]
+    def step(self, closure=None):
+        hps = self.hps
+        for group in self.param_groups:
+            lr = group['lr']
+            for p in group['params']:
+                if p.grad is None:
+                    continue
+                grad = p.grad.data
+                if grad.is_sparse:
+                    raise RuntimeError('Shampoo does not support sparse yet')
+                state = self.state[p]
+                if not state:
+                    self.init_var_state(p, state)
+                state[STEP] += 1
 
-            # Gather statistics, compute preconditioners
-            graft.add_statistics(grad)
-            if state[STEP] % hps.statistics_compute_steps == 0:
-                preconditioner.add_statistics(grad)
-            if state[STEP] % hps.preconditioning_compute_steps == 0:
-                preconditioner.compute_preconditioners()
+                preconditioner = state[PRECONDITIONER]
+                graft = state[GRAFT]
 
-            # Precondition gradients
-            graft_grad = graft.precondition_gradient(grad)
-            shampoo_grad = grad
-            if state[STEP] >= self.hps.start_preconditioning_step:
-                shampoo_grad = preconditioner.preconditioned_grad(grad)
+                # Gather statistics, compute preconditioners
+                graft.add_statistics(grad)
+                if state[STEP] % hps.statistics_compute_steps == 0:
+                    preconditioner.add_statistics(grad)
+                if state[STEP] % hps.preconditioning_compute_steps == 0:
+                    preconditioner.compute_preconditioners()
 
-            # Grafting
-            graft_norm = torch.norm(graft_grad)
-            shampoo_norm = torch.norm(shampoo_grad)
-            shampoo_grad.mul_(graft_norm / (shampoo_norm + 1e-16))
+                # Precondition gradients
+                graft_grad = graft.precondition_gradient(grad)
+                shampoo_grad = grad
+                if state[STEP] >= self.hps.start_preconditioning_step:
+                    shampoo_grad = preconditioner.preconditioned_grad(grad)
 
-            # Weight decay
-            if self.hps.weight_decay != 0.0:
-                shampoo_grad.add_(p.data, alpha=self.hps.weight_decay)
-                graft_grad.add_(p.data, alpha=self.hps.weight_decay)
+                # Grafting
+                graft_norm = torch.norm(graft_grad)
+                shampoo_norm = torch.norm(shampoo_grad)
+                shampoo_grad.mul_(graft_norm / (shampoo_norm + 1e-16))
 
-            # Momentum and Nesterov momentum, if needed
-            state[MOMENTUM].mul_(group['momentum']).add_(shampoo_grad)
-            graft_momentum = graft.update_momentum(grad, group['momentum'])
+                # Weight decay
+                if self.hps.weight_decay != 0.0:
+                    shampoo_grad.add_(p.data, alpha=self.hps.weight_decay)
+                    graft_grad.add_(p.data, alpha=self.hps.weight_decay)
 
-            if state[STEP] >= self.hps.start_preconditioning_step:
-                momentum_update = state[MOMENTUM]
-                wd_update = shampoo_grad
-            else:
-                momentum_update = graft_momentum
-                wd_update = graft_grad
+                # Momentum and Nesterov momentum, if needed
+                state[MOMENTUM].mul_(group['momentum']).add_(shampoo_grad)
+                graft_momentum = graft.update_momentum(grad, group['momentum'])
 
-            if hps.nesterov:
-                momentum_update.mul_(group['momentum']).add_(wd_update)
+                if state[STEP] >= self.hps.start_preconditioning_step:
+                    momentum_update = state[MOMENTUM]
+                    wd_update = shampoo_grad
+                else:
+                    momentum_update = graft_momentum
+                    wd_update = graft_grad
 
-            # Final update
-            p.data.add_(momentum_update, alpha=-lr)
+                if hps.nesterov:
+                    momentum_update.mul_(group['momentum']).add_(wd_update)
+
+                # Final update
+                p.data.add_(momentum_update, alpha=-lr)

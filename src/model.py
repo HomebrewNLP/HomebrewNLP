@@ -159,7 +159,6 @@ class Trainer(torch.nn.Module):
                                                ctx.optimizer.one_cycle.decay_mom_rate,
                                                ctx.optimizer.one_cycle.last_batch_iteration)
 
-
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
