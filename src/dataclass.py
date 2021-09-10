@@ -133,6 +133,7 @@ class Optimizer(DataClass):
     best_effort_shape_interpretation: bool = True
     graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
     nesterov: bool = True
+    no_preconditioning_for_layers_with_dim_gt: int = 8192
 
 
 class Eval(DataClass):

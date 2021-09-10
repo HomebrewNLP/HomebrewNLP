@@ -32,50 +32,6 @@ from src.dataclass import Optimizer
 from src.utils.matrix_functions import ComputePower
 
 
-class Graft:
-    """Base class to perform grafting onto Shampoo. This class does no grafting.
-    """
-
-    def __init__(self, hps, unused_var):
-        self.hps = hps
-
-    def add_statistics(self, grad):
-        pass  # Implemted in Adagrad; pass in SGD
-
-
-class SGDGraft(Graft):
-    """Graft using SGD+momentum.
-
-    momentum maintains an exponentially weighted moving average of gradients.
-    """
-
-    def __init__(self, hps, var):
-        super(SGDGraft, self).__init__(hps, var)
-        self.momentum = torch.zeros_like(var.data, device=var.get_device())
-
-
-    @staticmethod
-    def precondition_gradient(grad):
-        return grad
-
-
-class AdagradGraft(SGDGraft):
-    """Graft using Adagrad.
-
-    Essentially an implementation of Adagrad with momentum.
-    """
-
-    def __init__(self, hps, var):
-        super(AdagradGraft, self).__init__(hps, var)
-        self.statistics = torch.zeros_like(var.data, device=var.get_device())
-
-
-    def add_statistics(self, grad):
-        self.statistics.add_(grad.square())
-
-    def precondition_gradient(self, grad):
-        return grad / (torch.sqrt(self.statistics) + self.hps.diagonal_eps)
-
 
 class BlockPartitioner:
     """Partitions a tensor into smaller tensors for preconditioning.
@@ -277,11 +233,21 @@ class Shampoo(optim.Optimizer):
     example Shampoo config.
 
     Configurable Hyperparameters and default values:
-        beta2: float = 0.99
-        diagonal_eps: float = 1e-6
-        matrix_eps: float = 1e-12
+
+        beta2: float = 0.99 - Parameter for exponential
+                        moving average of Shampoo second
+                        moment statistics. If set == 1.0,
+                        then sums statistics instead of
+                        moving average.
+        diagonal_eps: float = 1e-6 - Only set if using
+                        Layerwise grafting mode to adagrad.
+                        This is the epsilon for adagrad
+                        updates.
+        matrix_eps: float = 1e-12 - Epsilon to add to
+                        statistics before computing inverse
+                        pth root. Max of 1e-6 for float32
         weight_decay: float = 0.0
-        inverse_exponent_override: int = 0  # fixed exponent
+        inverse_exponent_override: int = 0 - fixed exponent
                         for preconditioner, if >0
         start_preconditioning_step - Performance tuning params
                         for controlling memory & compute.
@@ -296,6 +262,10 @@ class Shampoo(optim.Optimizer):
                         Block size should be as large as
                         feasible under memory/time
                         constraints.
+        no_preconditioning_for_layers_with_dim_gt: int = 8192
+                        Avoids preconditioning large
+                        layers to reduce overall
+                        memory usage.
         best_effort_shape_interpretation: bool = True -
                         Automatic shape interpretation
                         (for eg: [4, 3, 1024, 512] would
@@ -313,8 +283,7 @@ class Shampoo(optim.Optimizer):
                                                'weight_decay': ctx.weight_decay,
                                                'eps': ctx.eps})
 
-    def init_var_state(self, var, state):
-        """Initialize the PyTorch state of for a single variable."""
+
 
     @torch.no_grad()
     def step(self, closure=None):
