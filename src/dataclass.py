@@ -130,11 +130,11 @@ class Optimizer(DataClass):
     start_preconditioning_step: int = 16
     preconditioning_compute_steps: int = 1
     statistics_compute_steps: int = 1
+    no_preconditioning_for_layers_with_dim_gt: int = 8192
     block_size: int = 128
     best_effort_shape_interpretation: bool = True
     graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
     nesterov: bool = True
-    no_preconditioning_for_layers_with_dim_gt: int = 8192
 
 
 class Eval(DataClass):
