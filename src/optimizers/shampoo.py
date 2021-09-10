@@ -283,7 +283,7 @@ class Shampoo(optim.Optimizer):
                                                'eps': ctx.eps})
 
     def _use_preconditioner(self, var):
-        return len(var.shape) > 0 and all([s <= self.hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape])
+        return len(var.shape) > 0 and all(s <= self.hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape)
 
     @torch.no_grad()
     def step(self, closure=None):
