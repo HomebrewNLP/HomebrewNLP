@@ -12,6 +12,7 @@ OPTIMIZERS = {'shampoo': shampoo.Shampoo}
 
 
 def build_optimizer(ctx: Context, parameters: typing.Iterable[torch.nn.Parameter]):
+    name = ctx.optimizer.type
     if name in OPTIMIZERS:
         return OPTIMIZERS[name](parameters, ctx.optimizer)
     try:
