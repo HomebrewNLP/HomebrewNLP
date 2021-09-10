@@ -143,7 +143,6 @@ class Trainer(torch.nn.Module):
         self.ctx = ctx
         self.model = model
         self.optimizer = build_optimizer(ctx, self.model.parameters())
-        # self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=ctx.optimizer.weight_decay)
         self.scheduler = lr_schedules.OneCycle(self.optimizer,
                                                ctx.optimizer.one_cycle.cycle_min_lr,
                                                ctx.optimizer.one_cycle.cycle_max_lr,

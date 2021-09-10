@@ -283,7 +283,7 @@ class Shampoo(optim.Optimizer):
                                                'eps': ctx.eps})
 
     def _use_preconditioner(self, var):
-        return len(var.shape) > 0 and all([s <= self.hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape])
+        return len(var.shape) > 0 and all(s <= self.hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape)
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -296,50 +296,49 @@ class Shampoo(optim.Optimizer):
                 grad = p.grad.data
                 if grad.is_sparse:
                     raise RuntimeError('Shampoo does not support sparse yet')
-                if MOMENTUM not in group:
-                    group[STEP] = 0
-                    group[MOMENTUM] = torch.zeros_like(p.data, device=p.get_device())
-                    group[GRAFT] = torch.zeros_like(p.data, device=p.get_device())
+                state = self.state[p]
+                if not state:
+                    state[STEP] = 0
+                    state[MOMENTUM] = torch.zeros_like(p.data, device=p.get_device())
+                    state[GRAFT] = torch.zeros_like(p.data, device=p.get_device())
                     if self._use_preconditioner(p):
-                        group[PRECONDITIONER] = Preconditioner(p, self.hps)
-                group[STEP] += 1
+                        state[PRECONDITIONER] = Preconditioner(p, self.hps)
+                state[STEP] += 1
 
                 # Gather statistics, compute preconditioners
 
                 # Precondition gradients
                 shampoo_grad = grad
                 if self.hps.graft_type == 'adagrad':
-                    group[GRAFT].add_(grad.square())
+                    state[GRAFT].add_(grad.square())
                 if self._use_preconditioner(p):
-                    preconditioner = group[PRECONDITIONER]
-                    if group[STEP] % hps.statistics_compute_steps == 0:
+                    preconditioner = state[PRECONDITIONER]
+                    if state[STEP] % hps.statistics_compute_steps == 0:
                         preconditioner.add_statistics(group['betas'][1], grad)
-                    if group[STEP] % hps.preconditioning_compute_steps == 0:
+                    if state[STEP] % hps.preconditioning_compute_steps == 0:
                         preconditioner.compute_preconditioners()
-                    if group[STEP] >= self.hps.start_preconditioning_step:
+                    if state[STEP] >= self.hps.start_preconditioning_step:
                         shampoo_grad = preconditioner.preconditioned_grad(grad)
 
                 # Grafting
                 graft_grad = grad
                 if self.hps.graft_type == 'adagrad':
-                    graft_grad = grad / (torch.sqrt(group[GRAFT]) + self.hps.diagonal_eps)
+                    graft_grad = grad / (torch.sqrt(state[GRAFT]) + self.hps.diagonal_eps)
                 graft_norm = torch.norm(graft_grad)
                 shampoo_norm = torch.norm(shampoo_grad)
                 shampoo_grad.mul_(graft_norm / (shampoo_norm + 1e-16))
 
                 # Momentum and Nesterov momentum, if needed
-                group[MOMENTUM].mul_(group['betas'][0]).add_(shampoo_grad)
+                state[MOMENTUM].mul_(group['betas'][0]).add_(shampoo_grad)
+                graft_momentum = grad
                 if self.hps.graft_type == 'sgd':
-                    graft_momentum = group[GRAFT].mul_(group['betas'][0]).add_(grad)
-                else:
-                    graft_momentum = grad
+                    graft_momentum = state[GRAFT].mul_(group['betas'][0]).add_(grad)
 
-                if group[STEP] >= self.hps.start_preconditioning_step and self._use_preconditioner(p):
-                    momentum_update = group[MOMENTUM]
+                momentum_update = graft_momentum
+                wd_update = graft_grad
+                if state[STEP] >= self.hps.start_preconditioning_step and self._use_preconditioner(p):
+                    momentum_update = state[MOMENTUM]
                     wd_update = shampoo_grad
-                else:
-                    momentum_update = graft_momentum
-                    wd_update = graft_grad
 
                 if hps.nesterov:
                     momentum_update.mul_(group['betas'][0]).add_(wd_update)

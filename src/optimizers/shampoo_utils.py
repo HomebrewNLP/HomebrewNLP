@@ -29,6 +29,7 @@
 from __future__ import print_function
 
 import math
+
 import numpy as np
 import torch
 
@@ -113,7 +114,7 @@ def merge_grads(state, grads):
         conc_grads = []
         ind = 0
         while ind < len(grads):
-            conc_grads.append(torch.cat(grads[ind:ind+n], axis=i))
+            conc_grads.append(torch.cat(grads[ind:ind + n], axis=i))
             ind += n
         grads = conc_grads
     if len(grads) != 1:

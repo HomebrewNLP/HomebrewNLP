@@ -11,7 +11,7 @@ from src.utils.formatting import pretty_print
 OPTIMIZERS = {'shampoo': shampoo.Shampoo}
 
 
-def build_optimizer(ctx: Context, parameters: typing.List[torch.nn.Parameter]):
+def build_optimizer(ctx: Context, parameters: typing.Iterable[torch.nn.Parameter]):
     name = ctx.optimizer.type.lower()
     if name in OPTIMIZERS:
         return OPTIMIZERS[name](parameters, ctx.optimizer)
