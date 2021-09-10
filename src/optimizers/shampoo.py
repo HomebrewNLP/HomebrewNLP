@@ -286,11 +286,21 @@ class Shampoo(optim.Optimizer):
     example Shampoo config.
 
     Configurable Hyperparameters and default values:
-        beta2: float = 0.99
-        diagonal_eps: float = 1e-6
-        matrix_eps: float = 1e-12
+
+        beta2: float = 0.99 - Parameter for exponential
+                        moving average of Shampoo second
+                        moment statistics. If set == 1.0,
+                        then sums statistics instead of
+                        moving average.
+        diagonal_eps: float = 1e-6 - Only set if using
+                        Layerwise grafting mode to adagrad.
+                        This is the epsilon for adagrad
+                        updates.
+        matrix_eps: float = 1e-12 - Epsilon to add to
+                        statistics before computing inverse
+                        pth root. Max of 1e-6 for float32
         weight_decay: float = 0.0
-        inverse_exponent_override: int = 0  # fixed exponent
+        inverse_exponent_override: int = 0 - fixed exponent
                         for preconditioner, if >0
         start_preconditioning_step - Performance tuning params
                         for controlling memory & compute.
@@ -305,6 +315,10 @@ class Shampoo(optim.Optimizer):
                         Block size should be as large as
                         feasible under memory/time
                         constraints.
+        no_preconditioning_for_layers_with_dim_gt: int = 8192
+                        Avoids preconditioning large
+                        layers to reduce overall
+                        memory usage.
         best_effort_shape_interpretation: bool = True -
                         Automatic shape interpretation
                         (for eg: [4, 3, 1024, 512] would
@@ -322,11 +336,17 @@ class Shampoo(optim.Optimizer):
                         )
         super(Shampoo, self).__init__(params, defaults)
 
+    def _skip_preconditioner(self, var):
+        return (len(param.shape) < 1 or any([
+        s > hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape
+    ]))
+
     def init_var_state(self, var, state):
         """Initialize the PyTorch state of for a single variable."""
         state[STEP] = 0
         state[MOMENTUM] = torch.zeros_like(var.data, device=var.get_device())
-        state[PRECONDITIONER] = Preconditioner(var, self.hps)
+        if not _skip_preconditioner(var):
+            state[PRECONDITIONER] = Preconditioner(var, self.hps)
         if str(self.hps.graft_type).lower() == 'adagrad':
             state[GRAFT] = AdagradGraft(self.hps, var)
         elif str(self.hps.graft_type) == 'sgd':
@@ -348,23 +368,22 @@ class Shampoo(optim.Optimizer):
                 if not state:
                     self.init_var_state(p, state)
                 state[STEP] += 1
-
-                preconditioner = state[PRECONDITIONER]
                 graft = state[GRAFT]
-
-                # Gather statistics, compute preconditioners
                 graft.add_statistics(grad)
-                if state[STEP] % hps.statistics_compute_steps == 0:
-                    preconditioner.add_statistics(grad)
-                if state[STEP] % hps.preconditioning_compute_steps == 0:
-                    preconditioner.compute_preconditioners()
-
-                # Precondition gradients
                 graft_grad = graft.precondition_gradient(grad)
-                shampoo_grad = grad
-                if state[STEP] >= self.hps.start_preconditioning_step:
-                    shampoo_grad = preconditioner.preconditioned_grad(grad)
 
+                if not _skip_preconditioner(p):
+                    preconditioner = state[PRECONDITIONER]
+
+                    if state[STEP] % hps.statistics_compute_steps == 0:
+                        preconditioner.add_statistics(grad)
+                    if state[STEP] % hps.preconditioning_compute_steps == 0:
+                        preconditioner.compute_preconditioners()
+
+                    if state[STEP] >= self.hps.start_preconditioning_step:
+                        shampoo_grad = preconditioner.preconditioned_grad(grad)
+                else:
+                    shampoo_grad = grad
                 # Grafting
                 graft_norm = torch.norm(graft_grad)
                 shampoo_norm = torch.norm(shampoo_grad)
@@ -379,7 +398,8 @@ class Shampoo(optim.Optimizer):
                 state[MOMENTUM].mul_(group['momentum']).add_(shampoo_grad)
                 graft_momentum = graft.update_momentum(grad, group['momentum'])
 
-                if state[STEP] >= self.hps.start_preconditioning_step:
+                if state[STEP] >= self.hps.start_preconditioning_step \
+                        and not _skip_preconditioner(p):
                     momentum_update = state[MOMENTUM]
                     wd_update = shampoo_grad
                 else:
