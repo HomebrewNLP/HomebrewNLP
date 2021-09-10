@@ -277,7 +277,6 @@ class Shampoo(optim.Optimizer):
 
     def __init__(self, params, ctx: Optimizer):
         self.hps = ctx
-        torch.optim.AdamW
         super(Shampoo, self).__init__(params, {"betas": [0, self.hps.beta2],
                                                'lr': 1,
                                                'weight_decay': ctx.weight_decay,

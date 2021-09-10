@@ -43,9 +43,8 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
         else:
             mod.zero_grad()
         mod.scheduler.step()
-        if mod.ctx.optimizer.type != 'Shampoo':
-            for p in mod.optimizer.param_groups:  # OneCycle resets beta2 to 0.990
-                p['betas'] = p['betas'][0], mod.ctx.optimizer.beta2
+        for p in mod.optimizer.param_groups:  # OneCycle resets beta2 to 0.990
+            p['betas'] = p['betas'][0], mod.ctx.optimizer.beta2
         mean_loss += loss
         with torch.no_grad():
             if mod.ctx.log.loss_steps_per_print and i % mod.ctx.log.loss_steps_per_print == 0:
