@@ -32,7 +32,6 @@ from src.dataclass import Optimizer
 from src.utils.matrix_functions import ComputePower
 
 
-
 class BlockPartitioner:
     """Partitions a tensor into smaller tensors for preconditioning.
 
@@ -283,7 +282,8 @@ class Shampoo(optim.Optimizer):
                                                'weight_decay': ctx.weight_decay,
                                                'eps': ctx.eps})
 
-
+    def _use_preconditioner(self, var):
+        return len(var.shape) > 0 and all([s <= self.hps.no_preconditioning_for_layers_with_dim_gt for s in var.shape])
 
     @torch.no_grad()
     def step(self, closure=None):
@@ -296,32 +296,34 @@ class Shampoo(optim.Optimizer):
                 grad = p.grad.data
                 if grad.is_sparse:
                     raise RuntimeError('Shampoo does not support sparse yet')
-                if PRECONDITIONER not in group:
+                if MOMENTUM not in group:
                     group[STEP] = 0
                     group[MOMENTUM] = torch.zeros_like(p.data, device=p.get_device())
-                    group[PRECONDITIONER] = Preconditioner(p, self.hps)
                     group[GRAFT] = torch.zeros_like(p.data, device=p.get_device())
+                    if self._use_preconditioner(p):
+                        group[PRECONDITIONER] = Preconditioner(p, self.hps)
                 group[STEP] += 1
 
-                preconditioner = group[PRECONDITIONER]
                 # Gather statistics, compute preconditioners
 
-                if self.hps.graft_type == 'adagrad':
-                    group[GRAFT].add_(grad.square())
-                if group[STEP] % hps.statistics_compute_steps == 0:
-                    preconditioner.add_statistics(group['betas'][1], grad)
-                if group[STEP] % hps.preconditioning_compute_steps == 0:
-                    preconditioner.compute_preconditioners()
-
                 # Precondition gradients
-                graft_grad = grad
                 shampoo_grad = grad
                 if self.hps.graft_type == 'adagrad':
-                    graft_grad = grad / (torch.sqrt(group[GRAFT]) + self.hps.diagonal_eps)
+                    group[GRAFT].add_(grad.square())
+                if self._use_preconditioner(p):
+                    preconditioner = group[PRECONDITIONER]
+                    if group[STEP] % hps.statistics_compute_steps == 0:
+                        preconditioner.add_statistics(group['betas'][1], grad)
+                    if group[STEP] % hps.preconditioning_compute_steps == 0:
+                        preconditioner.compute_preconditioners()
                     if group[STEP] >= self.hps.start_preconditioning_step:
                         shampoo_grad = preconditioner.preconditioned_grad(grad)
 
+
                 # Grafting
+                graft_grad = grad
+                if self.hps.graft_type == 'adagrad':
+                    graft_grad = grad / (torch.sqrt(group[GRAFT]) + self.hps.diagonal_eps)
                 graft_norm = torch.norm(graft_grad)
                 shampoo_norm = torch.norm(shampoo_grad)
                 shampoo_grad.mul_(graft_norm / (shampoo_norm + 1e-16))
@@ -333,7 +335,7 @@ class Shampoo(optim.Optimizer):
                 else:
                     graft_momentum = grad
 
-                if group[STEP] >= self.hps.start_preconditioning_step:
+                if group[STEP] >= self.hps.start_preconditioning_step and self._use_preconditioner(p):
                     momentum_update = group[MOMENTUM]
                     wd_update = shampoo_grad
                 else:
