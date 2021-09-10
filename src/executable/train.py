@@ -49,12 +49,12 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
         mean_loss += loss
         with torch.no_grad():
             if mod.ctx.log.loss_steps_per_print and i % mod.ctx.log.loss_steps_per_print == 0:
-                if ctx.optimizer.type != 'Shampoo':
-                    log(mean_loss, mod.optimizer.param_groups[0]['lr'], mod.optimizer.param_groups[0]['betas'])
+                if ctx.optimizer.type == 'Shampoo':
+                    betas = [mod.optimizer.state[mod.optimizer.param_groups[0]['params'][0]]['momentum'].sum(),
+                             mod.optimizer.param_groups[0]['betas'][1]]
                 else:
-                    stat1 = mod.optimizer.state[mod.optimizer.param_groups[0]['params'][0]]['momentum'].sum()
-                    stat2 = mod.optimizer.param_groups[0]['betas'][1]
-                    log(mean_loss, mod.optimizer.param_groups[0]['lr'], [stat1, stat2])
+                    betas = mod.optimizer.param_groups[0]['betas']
+                log(mean_loss, mod.optimizer.param_groups[0]['lr'], betas)
                 mean_loss.zero_()
             if mod.ctx.model.steps_per_checkpoint and i % mod.ctx.model.steps_per_checkpoint == 0:
                 mod.save()
