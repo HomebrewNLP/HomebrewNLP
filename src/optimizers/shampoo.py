@@ -330,17 +330,15 @@ class Shampoo(optim.Optimizer):
 
                 # Momentum and Nesterov momentum, if needed
                 state[MOMENTUM].mul_(group['betas'][0]).add_(shampoo_grad)
+                graft_momentum = grad
                 if self.hps.graft_type == 'sgd':
                     graft_momentum = state[GRAFT].mul_(group['betas'][0]).add_(grad)
-                else:
-                    graft_momentum = grad
 
+                momentum_update = graft_momentum
+                wd_update = graft_grad
                 if state[STEP] >= self.hps.start_preconditioning_step and self._use_preconditioner(p):
                     momentum_update = state[MOMENTUM]
                     wd_update = shampoo_grad
-                else:
-                    momentum_update = graft_momentum
-                    wd_update = graft_grad
 
                 if hps.nesterov:
                     momentum_update.mul_(group['betas'][0]).add_(wd_update)
