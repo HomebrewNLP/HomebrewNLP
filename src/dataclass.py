@@ -116,14 +116,13 @@ class Optimizer(DataClass):
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
-    epsilon: float = 1e-8
+    eps: float = 1e-8
     weight_decay: float = 0.01
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
 
     # Shampoo hyper-params
-    momentum: float = 0.9
     diagonal_eps: float = 1e-6
     matrix_eps: float = 1e-12
     inverse_exponent_override: int = 0
