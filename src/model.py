@@ -9,6 +9,7 @@ import torch.utils.data
 from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
+from src.optimizers.build import build_optimizer
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
@@ -141,7 +142,7 @@ class Trainer(torch.nn.Module):
         super(Trainer, self).__init__()
         self.ctx = ctx
         self.model = model
-        self.optimizer = torch.optim.AdamW(self.model.parameters(), weight_decay=ctx.optimizer.weight_decay)
+        self.optimizer = build_optimizer(ctx, self.model.parameters())
         self.scheduler = lr_schedules.OneCycle(self.optimizer,
                                                ctx.optimizer.one_cycle.cycle_min_lr,
                                                ctx.optimizer.one_cycle.cycle_max_lr,
@@ -223,11 +224,11 @@ class LinearAttention(torch.nn.Module):
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
+        cell = LinearAttentionCell(self, ctx, 1)
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth)
-                                                  for c in [LinearAttentionCell(self, ctx,
-                                                                                (1 - ctx.model.momentumnet_beta) /
-                                                                                ctx.model.momentumnet_beta ** i),
+                                                  for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
+                                                                          ctx.model.momentumnet_beta ** i),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** i)]])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
@@ -304,8 +305,7 @@ class LinearAttentionCell(torch.nn.Module):
         self.w0 = torch.nn.ModuleList([copy.deepcopy(param0) for _ in range(experts * moe_in_input)])
         self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
-        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features,
-                                   1, 1, 1)
+        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features, 1, 1, 1)
         self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
         # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
@@ -341,4 +341,9 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.training, self.caching,
                                                                                     self.idx)
         AuxLoss.apply(loss0 + loss1)
+        return out
+
+    def momentum(self, init_scale: float):
+        out = copy.deepcopy(self)
+        out.init_scale = init_scale
         return out

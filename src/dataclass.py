@@ -112,15 +112,28 @@ class SharpnessAwareMinimization(DataClass):
 
 
 class Optimizer(DataClass):
-    type: str = "AdamW"
+    type: str = "adamw"
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
-    epsilon: float = 1e-8
+    eps: float = 1e-8
     weight_decay: float = 0.01
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
+
+    # Shampoo hyper-params
+    diagonal_eps: float = 1e-6
+    matrix_eps: float = 1e-12
+    inverse_exponent_override: int = 0
+    start_preconditioning_step: int = 16
+    preconditioning_compute_steps: int = 1
+    statistics_compute_steps: int = 1
+    block_size: int = 128
+    best_effort_shape_interpretation: bool = True
+    graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
+    nesterov: bool = True
+    no_preconditioning_for_layers_with_dim_gt: int = 8192
 
 
 class Eval(DataClass):

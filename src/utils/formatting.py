@@ -64,6 +64,6 @@ class WandbLog:
                    "Speed/Batches per Second": rate,
                    "Speed/Tokens per Day": tokens_per_day,
                    "Optimizer/Learning Rate": learning_rate,
-                   "Optimizer/Beta 1": betas[0],
-                   "Optimizer/Beta 2": betas[1]},
+                   "Optimizer/Beta1": betas[0],
+                   "Optimizer/Beta2": betas[1]},
                   step=self.idx * self.ctx.log.loss_steps_per_print)

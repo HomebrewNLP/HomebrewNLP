@@ -1,0 +1,23 @@
+model:
+  depth: 32
+  conv_kernel_size: 11
+  weight_shared_blocks: 1
+  batch_size: 32
+  feed_forward_intermediate_factor: 0.125
+optimizer:
+  type: Shampoo
+  beta2: 0.90
+  gradient_accumulation_steps: 1
+  preconditioning_compute_steps: 4
+  weight_decay: 0
+  sharpness_aware_minimization:
+    enabled: True
+  one_cycle:
+    cycle_first_step_size: 8192
+    cycle_second_step_size: null
+    cycle_momentum: False
+    cycle_max_lr: 0.002
+log:
+  loss_steps_per_print: 8
+dataset:
+  num_workers: 4
