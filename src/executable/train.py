@@ -54,7 +54,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                 else:
                     stat1 = mod.optimizer.state[mod.optimizer.param_groups[0]['params'][0]]['momentum'].sum()
                     stat2 = mod.optimizer.param_groups[0]['betas'][1]
-                    log(mean_loss, mod.optimizer.param_groups[0]['lr'], [stat1,stat2])
+                    log(mean_loss, mod.optimizer.param_groups[0]['lr'], [stat1, stat2])
                 mean_loss.zero_()
             if mod.ctx.model.steps_per_checkpoint and i % mod.ctx.model.steps_per_checkpoint == 0:
                 mod.save()

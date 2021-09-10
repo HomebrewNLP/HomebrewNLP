@@ -93,12 +93,11 @@ def compute_splits(var_shape, block_size):
     return splits, split_sizes
 
 
-def split_grad(state, grad):
+def split_grad(state, gradient):
     """Split up the gradient according to the blocking strategy."""
-    if len(state[VAR_SHAPE]) < len(list(grad.shape)):
-        grad = torch.reshape(grad, state[VAR_SHAPE])
-    grads = [grad]
-    del(grad)
+    if len(state[VAR_SHAPE]) < len(list(gradient.shape)):
+        grad = torch.reshape(gradient, state[VAR_SHAPE])
+    grads = [gradient]
     for i, split_sizes in state[VAR_SPLITS]:
         split_grads = []
         for grad in grads:

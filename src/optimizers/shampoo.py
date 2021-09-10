@@ -48,7 +48,7 @@ class Graft:
         self.hps = hps
 
     def add_statistics(self, grad):
-        pass #Implemted in Adagrad; pass in SGD
+        pass  # Implemted in Adagrad; pass in SGD
 
 
 class SGDGraft(Graft):
@@ -133,7 +133,8 @@ class BlockPartitioner:
         """Partition tensor into blocks."""
 
         if tensor.shape != self._shape:
-            raise ValueError('Grad shape != var shape. X has shape of {}; Y shape is {}.'.format(str(tensor.shape),str(self._shape)))
+            raise ValueError('Grad shape != var shape. X has shape \
+            of {}; Y shape is {}.'.format(str(tensor.shape), str(self._shape)))
         tensors = [tensor]
         for (i, sizes) in self._split_sizes:
             tensors_local = []
@@ -213,7 +214,7 @@ class Preconditioner:
             self.statistics = [eps * torch.eye(s[0], device=device) for s in shapes]
             self.preconditioners = [torch.eye(s[0], device=device) for s in shapes]
 
-    def add_statistics(self, grad):
+    def add_statistics(self, gradient):
         """Compute statistics from gradients and add to the correct state entries.
 
         Args:
@@ -221,12 +222,11 @@ class Preconditioner:
         """
         if not self.statistics:
             return
-        reshaped_grad = torch.reshape(grad, self._transformed_shape)
+        reshaped_grad = torch.reshape(gradient, self._transformed_shape)
         partitioned_grads = self._partitioner.partition(reshaped_grad)
         w1 = self._hps.beta2
         w2 = 1.0 if w1 == 1.0 else (1.0 - w1)
         rank = len(self._transformed_shape)
-        del(grad)
         for j, grad in enumerate(partitioned_grads):
             for i in range(rank):
                 axes = list(range(i)) + list(range(i + 1, rank))
@@ -247,7 +247,7 @@ class Preconditioner:
             self.preconditioners[i] = ComputePower(
                 stat, exp, ridge_epsilon=eps)
 
-    def preconditioned_grad(self, grad):
+    def preconditioned_grad(self, gradient):
         """Precondition the gradient.
 
         Args:
@@ -257,15 +257,14 @@ class Preconditioner:
           A preconditioned gradient.
         """
         if not self.preconditioners:
-            return grad
-        reshaped_grad = torch.reshape(grad, self._transformed_shape)
+            return gradient
+        reshaped_grad = torch.reshape(gradient, self._transformed_shape)
         partitioned_grads = self._partitioner.partition(reshaped_grad)
         preconditioned_partitioned_grads = []
         num_splits = self._partitioner.num_splits()
-        del(grad)
         for i, grad in enumerate(partitioned_grads):
             preconditioners_for_grad = self.preconditioners[
-                                       i * num_splits:(i + 1) *num_splits]
+                                       i * num_splits: (i + 1) * num_splits]
             rank = len(grad.shape)
             precond_grad = grad
             for j in range(rank):
@@ -322,9 +321,7 @@ class Shampoo(optim.Optimizer):
         nesterov: bool = True
     """
 
-
-    def __init__(self, params,
-                 ctx=None):
+    def __init__(self, params, ctx=None):
         self.hps = ctx
         defaults = dict(momentum=self.hps.momentum,
                         betas=[0, self.hps.beta2],
