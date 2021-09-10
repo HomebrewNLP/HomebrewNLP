@@ -8,7 +8,7 @@ from src.dataclass import Context
 from src.optimizers import shampoo
 from src.utils.formatting import pretty_print
 
-OPTIMIZERS = {'shampoo': shampoo.Shampoo}
+OPTIMIZERS = {'Shampoo': shampoo.Shampoo}
 
 
 def build_optimizer(ctx: Context, parameters: typing.Iterable[torch.nn.Parameter]):
