@@ -41,8 +41,12 @@ class Model(DataClass):
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
     dropout_probability: float = 0.
-    bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
+    bottleneck_group: int = 1  # not all group counts are possible. it has to be divide self.features without residual
     moe: MoE = MoE()
+    shuffle_groups: int = 1
+    # connect to `features // shuffle_groups` random and deterministically selected channels
+    # shuffle_groups are not applied on MoE, but instead only on convolution. If MoE input and output are enabled,
+    # shuffle_groups are only used in the bottleneck block making it equivalent to bottleneck_group
     offloading: bool = False
 
 
@@ -118,6 +122,7 @@ class Optimizer(DataClass):
     beta2: float = 0.95  # beta1 is controlled by one_cycle
     eps: float = 1e-8
     weight_decay: float = 0.01
+    nesterov: bool = True
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
@@ -132,7 +137,6 @@ class Optimizer(DataClass):
     block_size: int = 128
     best_effort_shape_interpretation: bool = True
     graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
-    nesterov: bool = True
     no_preconditioning_for_layers_with_dim_gt: int = 8192
 
 

@@ -1,4 +1,5 @@
 import copy
+import random
 import typing
 
 import numpy as np
@@ -34,13 +35,16 @@ def norm(out: torch.Tensor) -> torch.Tensor:
     return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
 
 
-def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
+def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool, shuffle_groups: int) -> torch.Tensor:
     if use_pad and weight.size()[-1] - 1 > 0:
         inp = torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0))
-    return torch.nn.functional.conv1d(inp, weight, groups=groups)
+    if shuffle_groups:
+        inp = inp.gather(1, torch.argsort(torch.rand_like(inp), 1))
+    return torch.nn.functional.conv1d(inp, weight, groups=groups * shuffle_groups)
 
 
-def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int, pad: bool) -> torch.Tensor:
+def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int, pad: bool,
+              shuffle_groups: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
     if 0 < p < 1:
         if train:
@@ -51,7 +55,7 @@ def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, gr
             weight = weight * p
         else:
             inp = inp * p
-    return conv(inp, weight, groups, pad)
+    return conv(inp, weight, groups, pad, shuffle_groups)
 
 
 def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
@@ -72,11 +76,11 @@ def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
 
 
 def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], dropout_probability: float,
-              training: bool, groups: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+              training: bool, groups: int, shuffle_groups: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     if w:
         return moe(inp, w, w_gate)
     return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
-            drop_conv(inp, w_gate, dropout_probability, training, groups, False))
+            drop_conv(inp, w_gate, dropout_probability, training, groups, False, shuffle_groups))
 
 
 def split_norm(inp: torch.Tensor) -> torch.Tensor:
@@ -89,7 +93,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
                      init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool,
-                     caching: bool, idx: int
+                     caching: bool, idx: int, shuffle_groups: int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     pad = True
@@ -98,7 +102,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
             pad = False
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size + 1:].detach()
-    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
+    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1, shuffle_groups)
     depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
     if not training and caching:
@@ -109,9 +113,9 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         if idx - 1 > kernel_size:
             cumsum_cache = cum.detach()
     inp = torch.nn.functional.leaky_relu(norm(cum / divisor * scale + shift), 0.02)
-    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
+    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad, shuffle_groups)
     inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
-    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
+    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1, shuffle_groups)
     return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
 
 
@@ -228,7 +232,8 @@ class LinearAttention(torch.nn.Module):
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth)
                                                   for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
-                                                                          ctx.model.momentumnet_beta ** i),
+                                                                          ctx.model.momentumnet_beta ** i,
+                                                                          i),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** i)]])
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
@@ -295,6 +300,7 @@ class LinearAttentionCell(torch.nn.Module):
         self.kernel_size = ctx.model.conv_kernel_size
         self.dropout_probability = 1 - ctx.model.dropout_probability
         self.bottleneck_group = ctx.model.bottleneck_group
+        self.shuffle_groups = ctx.model.shuffle_groups
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
         experts = ctx.model.moe.num_experts
         moe_in_output = ctx.model.moe.use_in_output
@@ -311,6 +317,7 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
+        self.rng_state = torch.get_rng_state()
 
     def reset_cache(self):
         self._cumsum_cache = torch.zeros([])
@@ -326,6 +333,8 @@ class LinearAttentionCell(torch.nn.Module):
         else:
             self.idx = inp.size(2)
             div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
+        torch.set_rng_state(self.rng_state)
+        torch.cuda.set_rng_state(self.rng_state)
         loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
                                                                                     div,
                                                                                     offload(self.w0_gate, inp),
@@ -339,11 +348,14 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.bottleneck_group,
                                                                                     self.dropout_probability,
                                                                                     self.training, self.caching,
-                                                                                    self.idx)
+                                                                                    self.idx, self.shuffle_groups)
         AuxLoss.apply(loss0 + loss1)
         return out
 
-    def momentum(self, init_scale: float):
+    def momentum(self, init_scale: float, layer_idx: int):
         out = copy.deepcopy(self)
         out.init_scale = init_scale
+        random.seed(layer_idx)
+        torch.manual_seed(random.randint(0, 2 ** 64))
+        out.rng_state = torch.get_rng_state()
         return out

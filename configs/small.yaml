@@ -5,13 +5,18 @@ model:
   batch_size: 1024
   feed_forward_intermediate_factor: 0.125
 optimizer:
+  type: Shampoo
   beta2: 0.95
-  gradient_accumulation_steps: 1
+  gradient_accumulation_steps: 4
+  start_preconditioning_step: 32
+  preconditioning_compute_steps: 1
+  matrix_eps: 0.0000000001
   one_cycle:
-    cycle_first_step_size: 8192
+    cycle_first_step_size: 1024
     cycle_second_step_size: null
-    cycle_max_lr: 0.01
+    cycle_min_lr: 0
+    cycle_max_lr: 0.1
 log:
-  loss_steps_per_print: 8
+  loss_steps_per_print: 1
 dataset:
   num_workers: 12
