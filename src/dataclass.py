@@ -129,6 +129,7 @@ class Optimizer(DataClass):
     start_preconditioning_step: int = 16
     preconditioning_compute_steps: int = 1
     statistics_compute_steps: int = 1
+    pth_root_method: str = 'newton'
     no_preconditioning_for_layers_with_dim_gt: int = 8192
     block_size: int = 128
     best_effort_shape_interpretation: bool = True

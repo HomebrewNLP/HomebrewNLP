@@ -29,7 +29,7 @@ import torch
 import torch.optim as optim
 
 from src.dataclass import Optimizer
-from src.utils.matrix_functions import ComputePower
+from src.utils.matrix_functions import ComputePower, PowerSVD
 
 
 class BlockPartitioner:
@@ -138,12 +138,20 @@ class Preconditioner:
         self._original_shape = var.shape
         self._transformed_shape = var.shape
 
+        compute_funcs = {'newton': ComputePower, 'svd': PowerSVD}
+
         if hps.best_effort_shape_interpretation:
             self._transformed_shape = _merge_small_dims(
                 self._original_shape, hps.block_size)
 
         reshaped_var = torch.reshape(var, self._transformed_shape)
         self._partitioner = BlockPartitioner(reshaped_var, hps)
+
+        if hps.pth_root_method not in compute_funcs:
+            hps.pth_root_method = 'newton'
+
+        self.compute_func = compute_funcs[hps.pth_root_method]
+
         shapes = self._partitioner.shapes_for_preconditioners()
         rank = len(self._transformed_shape)
         device = var.get_device()
@@ -184,7 +192,7 @@ class Preconditioner:
         exp = self.exponent_for_preconditioner()
         eps = self._hps.matrix_eps
         for i, stat in enumerate(self.statistics):
-            self.preconditioners[i] = ComputePower(
+            self.preconditioners[i] = self.compute_func(
                 stat, exp, ridge_epsilon=eps)
 
     def preconditioned_grad(self, gradient):
@@ -261,6 +269,7 @@ class Shampoo(optim.Optimizer):
                         Block size should be as large as
                         feasible under memory/time
                         constraints.
+        pth_root_method: str = 'newton' - 'newton' or 'svd'
         no_preconditioning_for_layers_with_dim_gt: int = 8192
                         Avoids preconditioning large
                         layers to reduce overall
