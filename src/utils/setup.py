@@ -1,11 +1,14 @@
 import math
 import random
+import typing
 
 import numpy as np
 import torch
+from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
 from src.model import LinearAttention, Trainer
+from src.optimizers.build import build_optimizer
 from src.utils.formatting import pretty_print
 
 
@@ -35,8 +38,24 @@ def setup_torch(seed: int):
     torch.manual_seed(seed)
 
 
-def get_model(ctx: Context, load_model: bool) -> Trainer:
-    mod = Trainer(ctx, LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float))
+def get_model(ctx: Context, load_model: bool) -> typing.Tuple[Trainer, torch.optim.Optimizer, lr_schedules.OneCycle]:
+    mod = LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float)
+    optimizer = build_optimizer(ctx, mod.parameters())
+    scheduler = lr_schedules.OneCycle(optimizer,
+                                      ctx.optimizer.one_cycle.cycle_min_lr,
+                                      ctx.optimizer.one_cycle.cycle_max_lr,
+                                      ctx.optimizer.one_cycle.decay_lr_rate,
+                                      ctx.optimizer.one_cycle.cycle_first_step_size,
+                                      ctx.optimizer.one_cycle.cycle_second_step_size,
+                                      ctx.optimizer.one_cycle.cycle_first_stair_count,
+                                      ctx.optimizer.one_cycle.cycle_second_stair_count,
+                                      ctx.optimizer.one_cycle.decay_step_size,
+                                      ctx.optimizer.one_cycle.cycle_momentum,
+                                      ctx.optimizer.one_cycle.cycle_min_mom,
+                                      ctx.optimizer.one_cycle.cycle_max_mom,
+                                      ctx.optimizer.one_cycle.decay_mom_rate,
+                                      ctx.optimizer.one_cycle.last_batch_iteration)
+    mod = Trainer(ctx, mod, optimizer, scheduler)
 
     if ctx.model.print_on_init:
         pretty_print(str(mod))
@@ -48,7 +67,7 @@ def get_model(ctx: Context, load_model: bool) -> Trainer:
         mod.load()
     if not ctx.model.offloading:
         mod = mod.to(ctx.model.device)
-    return mod
+    return mod, optimizer, scheduler
 
 
 def encode(prompt: str) -> torch.Tensor:

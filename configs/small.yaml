@@ -1,13 +1,13 @@
 model:
-  depth: 32
+  depth: 4
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 1024
+  batch_size: 512
   feed_forward_intermediate_factor: 0.125
 optimizer:
-  type: Shampoo
+  type: AdamW
   beta2: 0.95
-  gradient_accumulation_steps: 4
+  gradient_accumulation_steps: 1
   start_preconditioning_step: 32
   preconditioning_compute_steps: 1
   matrix_eps: 0.0000000001
@@ -17,6 +17,6 @@ optimizer:
     cycle_min_lr: 0
     cycle_max_lr: 0.1
 log:
-  loss_steps_per_print: 1
+  loss_steps_per_print: 128
 dataset:
   num_workers: 12

@@ -1,5 +1,4 @@
 import copy
-import random
 import typing
 
 import numpy as np
@@ -36,25 +35,12 @@ def norm(out: torch.Tensor) -> torch.Tensor:
 
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool, shuffle_groups: int) -> torch.Tensor:
-    if use_pad and weight.size()[-1] - 1 > 0:
-        inp = torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0))
-    if shuffle_groups:
-        inp = inp.gather(1, torch.argsort(torch.rand_like(inp), 1))
     return torch.nn.functional.conv1d(inp, weight, groups=groups * shuffle_groups)
 
 
 def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int, pad: bool,
               shuffle_groups: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
-    if 0 < p < 1:
-        if train:
-            mask = torch.randn((features,), device=inp.device, dtype=inp.dtype) < p
-            inp = torch.masked_select(inp, mask.view(1, -1, 1)).view(batch, -1, sequence)
-            weight = torch.masked_select(weight, mask.view(-1, 1, 1)).view(-1, weight.size(1), weight.size(2))
-        elif torch.numel(inp) > torch.numel(weight):
-            weight = weight * p
-        else:
-            inp = inp * p
     return conv(inp, weight, groups, pad, shuffle_groups)
 
 
@@ -77,8 +63,6 @@ def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
 
 def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], dropout_probability: float,
               training: bool, groups: int, shuffle_groups: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    if w:
-        return moe(inp, w, w_gate)
     return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
             drop_conv(inp, w_gate, dropout_probability, training, groups, False, shuffle_groups))
 
@@ -88,53 +72,22 @@ def split_norm(inp: torch.Tensor) -> torch.Tensor:
     return norm(scale0 * scale1 + shift)
 
 
-@torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
                      init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool,
-                     caching: bool, idx: int, shuffle_groups: int
+                     caching: bool, idx: int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    kernel_size = w1.size(2)
     pad = True
-    if not training and caching:
-        if idx - 1 > kernel_size and inp.size(2) == 1:
-            pad = False
-            inp = torch.cat([input_cache, inp], -1)
-        input_cache = inp[:, :, -kernel_size + 1:].detach()
-    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1, shuffle_groups)
+    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1, 1)
     depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
-    if not training and caching:
-        cum = cum + cumsum_cache
-        scale = scale[:, :, -1:]
-        shift = shift[:, :, -1:]
-        cum = cum[:, :, -1:]
-        if idx - 1 > kernel_size:
-            cumsum_cache = cum.detach()
     inp = torch.nn.functional.leaky_relu(norm(cum / divisor * scale + shift), 0.02)
-    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad, shuffle_groups)
+    inp = torch.nn.functional.pad(inp, (w1.size(2) - 1, 0))
+    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad, 1)
     inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
-    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1, shuffle_groups)
+    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1, 1)
     return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
-
-
-def get_coupling(beta_tmp: float):
-    @torch.jit.script
-    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return other_stream * beta + fn_out
-
-    @torch.jit.script
-    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return (output - fn_out) / beta
-
-    def _wrapped_momentum_coupling_forward(x, y):
-        return momentum_coupling_forward(x, y, beta_tmp)
-
-    def _wrapped_momentum_coupling_inverse(x, y):
-        return momentum_coupling_inverse(x, y, beta_tmp)
-
-    return _wrapped_momentum_coupling_forward, _wrapped_momentum_coupling_inverse
 
 
 def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
@@ -142,48 +95,64 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
 
 
 class Trainer(torch.nn.Module):
-    def __init__(self, ctx: Context, model: torch.nn.Module):
+    def __init__(self, ctx: Context, model: torch.nn.Module, optimizer:torch.optim.Optimizer, scheduler):
         super(Trainer, self).__init__()
         self.ctx = ctx
         self.model = model
-        self.optimizer = build_optimizer(ctx, self.model.parameters())
-        self.scheduler = lr_schedules.OneCycle(self.optimizer,
-                                               ctx.optimizer.one_cycle.cycle_min_lr,
-                                               ctx.optimizer.one_cycle.cycle_max_lr,
-                                               ctx.optimizer.one_cycle.decay_lr_rate,
-                                               ctx.optimizer.one_cycle.cycle_first_step_size,
-                                               ctx.optimizer.one_cycle.cycle_second_step_size,
-                                               ctx.optimizer.one_cycle.cycle_first_stair_count,
-                                               ctx.optimizer.one_cycle.cycle_second_stair_count,
-                                               ctx.optimizer.one_cycle.decay_step_size,
-                                               ctx.optimizer.one_cycle.cycle_momentum,
-                                               ctx.optimizer.one_cycle.cycle_min_mom,
-                                               ctx.optimizer.one_cycle.cycle_max_mom,
-                                               ctx.optimizer.one_cycle.decay_mom_rate,
-                                               ctx.optimizer.one_cycle.last_batch_iteration)
+        self.optimizer =optimizer
+        self.scheduler = scheduler
 
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
 
-    def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        loss = torch.nn.functional.cross_entropy(self.model(self._to_device_detach(src)), self._to_device_detach(tgt))
-        loss.backward()
-        return loss.detach()
-
     @torch.no_grad()
-    def _clip_gradient(self):
+    def _clip_grad(self):
         for p in self.gradients():
             g_norm = p.grad.norm(2, 0, True).clamp(min=self.ctx.optimizer.agc.zero_division_eps)
             p_norm = p.norm(2, 0, True).clamp(min=self.ctx.optimizer.agc.eps)
             grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
             p.grad.data.copy_(p.grad * grad_scale)
 
-    def accumulated_step(self, dataloader: torch.utils.data.DataLoader) -> torch.Tensor:
-        loss = sum(self._forward_backward(s.squeeze(0), t.squeeze(0)) for (s, t), _ in
-                   zip(dataloader, range(self.ctx.optimizer.gradient_accumulation_steps)))
-        self._clip_gradient()
+    def _step(self, src: torch.Tensor, tgt: torch.Tensor):
+        for s, t in zip(torch.unbind(src, 0), torch.unbind(tgt, 0)):
+            s, t = self._to_device_detach(s), self._to_device_detach(t)
+            with torch.enable_grad():
+                loss = torch.nn.functional.cross_entropy(self.model(s), t)
+                loss.backward()
+                loss = loss.detach()
+
+        self._clip_grad()
         return loss
+
+    def forward(self, src: torch.Tensor, tgt: torch.Tensor):
+        src0, src1 = src.chunk(2, 0)
+        tgt0, tgt1 = tgt.chunk(2, 0)
+        loss0 = self._step(src0, tgt0)
+
+        with torch.no_grad():
+            for p in self.gradients():
+                p.grad *= p.square()
+                p.grad *= self.ctx.optimizer.sharpness_aware_minimization.step_size
+                p.data.add_(p.grad)
+                p.prev_step = p.grad
+                p.grad = None
+                p.detach_()
+                p.requires_grad_()
+        loss1 = self._step(src1, tgt1)
+        self.optimizer.step()
+        with torch.no_grad():
+            for p in self.gradients():
+                p.data.sub_(p.prev_step)
+                p.prev_step = None
+                p.grad = None
+                p.detach_()
+                p.requires_grad_()
+        self.scheduler.step()
+
+        for p in self.optimizer.param_groups:  # OneCycle resets beta2 to 0.990
+            p['betas'] = p['betas'][0], self.ctx.optimizer.beta2
+        return loss0, loss1, sorted_weight_values(self.model)
 
     @torch.no_grad()
     def zero_grad(self):
@@ -200,6 +169,12 @@ class Trainer(torch.nn.Module):
     def save(self):
         torch.save(self.state_dict(), self.ctx.model.checkpoint_path)
 
+    def __repr__(self):
+        return str(self.model)
+
+    def __str__(self):
+        return repr(self)
+
     def load(self):
         wrong_keys = self.load_state_dict(torch.load(self.ctx.model.checkpoint_path), strict=False)
         for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
@@ -208,6 +183,14 @@ class Trainer(torch.nn.Module):
                     raise ValueError(f"{key} is missing in checkpoint but exists in model")
                 if key in wrong_keys.unexpected_keys:
                     raise ValueError(f"{key} is missing in model but exists in checkpoint")
+
+
+def sorted_weights(mod: torch.nn.Module) -> typing.List[typing.Tuple[str, torch.Tensor]]:
+    return sorted(mod.state_dict().items(), key=lambda x: x[0])
+
+
+def sorted_weight_values(mod: torch.nn.Module) -> typing.Tuple[torch.Tensor]:
+    return tuple(w[1].detach().requires_grad_(True) for w in sorted_weights(mod))
 
 
 class MomentumNetSide(torch.nn.Module):
@@ -318,6 +301,7 @@ class LinearAttentionCell(torch.nn.Module):
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
         self.rng_state = torch.get_rng_state()
+        self.cuda_rng_state = torch.cuda.get_rng_state_all()
 
     def reset_cache(self):
         self._cumsum_cache = torch.zeros([])
@@ -325,18 +309,8 @@ class LinearAttentionCell(torch.nn.Module):
         self.idx = 0
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        if self.training:
-            div = self.divisor()
-        elif self.caching:
-            self.idx += inp.size(2)
-            div = torch.LongTensor([self.idx]).to(inp.device)
-        else:
-            self.idx = inp.size(2)
-            div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
-        torch.set_rng_state(self.rng_state)
-        torch.cuda.set_rng_state(self.rng_state)
         loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
-                                                                                    div,
+                                                                                    self.divisor(),
                                                                                     offload(self.w0_gate, inp),
                                                                                     [store(inp) for store in self.w0],
                                                                                     offload(self.w1, inp),
@@ -348,14 +322,11 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.bottleneck_group,
                                                                                     self.dropout_probability,
                                                                                     self.training, self.caching,
-                                                                                    self.idx, self.shuffle_groups)
+                                                                                    self.idx)
         AuxLoss.apply(loss0 + loss1)
         return out
 
     def momentum(self, init_scale: float, layer_idx: int):
         out = copy.deepcopy(self)
         out.init_scale = init_scale
-        random.seed(layer_idx)
-        torch.manual_seed(random.randint(0, 2 ** 64))
-        out.rng_state = torch.get_rng_state()
         return out
