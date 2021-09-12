@@ -148,3 +148,11 @@ def ComputePower(mat_g, p,
         error = new_error
         count += 1
     return mat_root
+
+@torch.no_grad()
+def PowerSVD(mat_g, p, ridge_epsilon=1e-12):
+    device = mat_g.device
+    mat_g = mat_g.cpu()
+    u, s, v = torch.svd(mat_g + ridge_epsilon)
+    return (u @ s.pow_(1/p).diag() @ v.t()).to(device)
+

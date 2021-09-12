@@ -29,7 +29,7 @@ import torch
 import torch.optim as optim
 
 from src.dataclass import Optimizer
-from src.utils.matrix_functions import ComputePower
+from src.utils.matrix_functions import ComputePower, PowerSVD
 
 
 class BlockPartitioner:
@@ -138,6 +138,8 @@ class Preconditioner:
         self._original_shape = var.shape
         self._transformed_shape = var.shape
 
+        compute_funcs = {'newton': ComputePower, 'svd': PowerSVD}
+
         if hps.best_effort_shape_interpretation:
             self._transformed_shape = _merge_small_dims(
                 self._original_shape, hps.block_size)
@@ -147,6 +149,12 @@ class Preconditioner:
         shapes = self._partitioner.shapes_for_preconditioners()
         rank = len(self._transformed_shape)
         device = var.get_device()
+
+        if hps.pth_root_method not in compute_funcs:
+            hps.pth_root_method = 'newton'
+
+        self.compute_func = compute_funcs[hps.pth_root_method]
+
         if rank <= 1:
             self.statistics = []
             self.preconditioners = []
@@ -184,7 +192,7 @@ class Preconditioner:
         exp = self.exponent_for_preconditioner()
         eps = self._hps.matrix_eps
         for i, stat in enumerate(self.statistics):
-            self.preconditioners[i] = ComputePower(
+            self.preconditioners[i] = self.compute_func(
                 stat, exp, ridge_epsilon=eps)
 
     def preconditioned_grad(self, gradient):
@@ -254,6 +262,7 @@ class Shampoo(optim.Optimizer):
                         preconditioner.
         statistics_compute_steps: int = 1 - How often to
                         compute statistics.
+        pth_root_method: str = 'newton' - 'newton' or 'svd'
         block_size: int = 128 - Block size for large
                         layers (if > 0). Block size = 1
                         is equivalent to Adagrad (but is
