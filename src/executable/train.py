@@ -3,7 +3,7 @@ import wandb
 
 from src.dataclass import Context
 from src.dataset import get_dataset
-from src.model import sorted_weight_values, sorted_weights
+from src.model import sorted_weights
 from src.utils.formatting import WandbLog
 from src.utils.setup import get_model
 
@@ -30,6 +30,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
         mean_loss0 += loss0
         mean_loss1 += loss1
         mod.load_state_dict({k: s for s, (k, v) in zip(weights, sorted_weights(mod))})
+        sched.step()
         with torch.no_grad():
             if ctx.log.loss_steps_per_print and i % ctx.log.loss_steps_per_print == 0:
                 log(mean_loss0, mean_loss1, opt.param_groups[0]['lr'], opt.param_groups[0]['betas'])

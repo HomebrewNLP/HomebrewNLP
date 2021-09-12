@@ -6,10 +6,8 @@ import revlib
 import torch
 import torch.nn.functional
 import torch.utils.data
-from deepspeed.runtime import lr_schedules
 
 from src.dataclass import Context
-from src.optimizers.build import build_optimizer
 
 QUAD_TENSOR = typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]
 
@@ -95,11 +93,11 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
 
 
 class Trainer(torch.nn.Module):
-    def __init__(self, ctx: Context, model: torch.nn.Module, optimizer:torch.optim.Optimizer, scheduler):
+    def __init__(self, ctx: Context, model: torch.nn.Module, optimizer: torch.optim.Optimizer, scheduler):
         super(Trainer, self).__init__()
         self.ctx = ctx
         self.model = model
-        self.optimizer =optimizer
+        self.optimizer = optimizer
         self.scheduler = scheduler
 
     @torch.no_grad()
@@ -148,7 +146,6 @@ class Trainer(torch.nn.Module):
                 p.grad = None
                 p.detach_()
                 p.requires_grad_()
-        self.scheduler.step()
 
         for p in self.optimizer.param_groups:  # OneCycle resets beta2 to 0.990
             p['betas'] = p['betas'][0], self.ctx.optimizer.beta2
