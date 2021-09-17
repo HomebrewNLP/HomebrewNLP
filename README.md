@@ -7,7 +7,7 @@ A case study of efficient training of large language models using commodity hard
 ## Example Command
 
 ```BASH
-python3 main.py configs/small.yaml
+python3 main.py train --config_path configs/small.yaml
 ```
 
 ---

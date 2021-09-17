@@ -229,7 +229,8 @@ class LinearAttention(torch.nn.Module):
                                                   for i in range(1, 1 + ctx.model.depth)
                                                   for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
                                                                           ctx.model.momentumnet_beta ** i),
-                                                            MomentumNetSide(ctx.model.momentumnet_beta ** i)]])
+                                                            MomentumNetSide(ctx.model.momentumnet_beta ** i)]],
+                                               target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
@@ -254,20 +255,6 @@ class AuxLoss(torch.autograd.Function):
         inp.mean().backward()
 
 
-class TensorOffload(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inp: torch.Tensor, reference: torch.Tensor):
-        ctx.device = inp.device
-        return inp.to(device=reference.device, non_blocking=True)
-
-    @staticmethod
-    def backward(ctx, grad_outputs: torch.Tensor):
-        return grad_outputs.to(ctx.device, non_blocking=True), None
-
-
-offload = TensorOffload.apply
-
-
 class ParameterStore(torch.nn.Module):
     """
     Something (likely deepspeed) changes all parameters in a ParameterList to [1] even though standalone parameters
@@ -281,9 +268,6 @@ class ParameterStore(torch.nn.Module):
     def __repr__(self):
         return (f'{self.__class__.__name__}(shape={str(list(self.param.size()))}, device={self.param.device}, '
                 f'dtype={self.param.dtype})')
-
-    def __call__(self, reference: torch.Tensor):
-        return offload(self.param, reference)
 
 
 class LinearAttentionCell(torch.nn.Module):
@@ -328,11 +312,11 @@ class LinearAttentionCell(torch.nn.Module):
             div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
         loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
                                                                                     div,
-                                                                                    offload(self.w0_gate, inp),
-                                                                                    [store(inp) for store in self.w0],
-                                                                                    offload(self.w1, inp),
-                                                                                    offload(self.w2_gate, inp),
-                                                                                    [store(inp) for store in self.w2],
+                                                                                    self.w0_gate,
+                                                                                    [store.param for store in self.w0],
+                                                                                    self.w1,
+                                                                                    self.w2_gate,
+                                                                                    [store.param for store in self.w2],
                                                                                     self._input_cache,
                                                                                     self._cumsum_cache,
                                                                                     self.init_scale,
