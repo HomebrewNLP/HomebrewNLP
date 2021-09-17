@@ -112,7 +112,7 @@ class SharpnessAwareMinimization(DataClass):
 
 
 class Optimizer(DataClass):
-    type: str = "adamw"
+    type: str = "AdamW"
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
