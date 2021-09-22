@@ -84,7 +84,6 @@ def split_norm(inp: torch.Tensor) -> torch.Tensor:
     return norm(scale0 * scale1 + shift)
 
 
-@torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
@@ -116,11 +115,9 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
 
 
 def get_coupling(beta_tmp: float):
-    @torch.jit.script
     def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
         return other_stream * beta + fn_out
 
-    @torch.jit.script
     def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
         return (output - fn_out) / beta
 
@@ -138,10 +135,10 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
 
 
 class Trainer(torch.nn.Module):
-    def __init__(self, ctx: Context, model: torch.nn.Module):
+    def __init__(self, ctx: Context, model: torch.nn.Module, data: typing.Optional[torch.Tensor]):
         super(Trainer, self).__init__()
         self.ctx = ctx
-        self.model = model
+        self.model = torch.jit.trace(model, data) if data else model
         self.optimizer = build_optimizer(ctx, self.model.parameters())
         self.scheduler = lr_schedules.OneCycle(self.optimizer,
                                                ctx.optimizer.one_cycle.cycle_min_lr,
@@ -175,9 +172,8 @@ class Trainer(torch.nn.Module):
             grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
             p.grad.data.copy_(p.grad * grad_scale)
 
-    def accumulated_step(self, dataloader: torch.utils.data.DataLoader) -> torch.Tensor:
-        loss = sum(self._forward_backward(s.squeeze(0), t.squeeze(0)) for (s, t), _ in
-                   zip(dataloader, range(self.ctx.optimizer.gradient_accumulation_steps)))
+    def accumulated_step(self, data: torch.Tensor) -> torch.Tensor:
+        loss = sum(self._forward_backward(s, t) for s, t in zip(*data))
         self._clip_gradient()
         return loss
 
@@ -230,7 +226,7 @@ class LinearAttention(torch.nn.Module):
                                                   for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
                                                                           ctx.model.momentumnet_beta ** i),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** i)]],
-                                               target_device=ctx.model.device)
+                                                target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 

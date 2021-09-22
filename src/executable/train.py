@@ -11,18 +11,20 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
     wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity, config=ctx.serialize())
     ctx = Context(wandb.config)
 
-    mod = get_model(ctx, load_model)
+    data = get_dataset(ctx)
+    data_len = len(data)
+    data = iter(data)
+    mod = get_model(ctx, load_model, next(data)[0])
     wandb.watch(mod, log=ctx.log.wandb.model_log_type, log_freq=ctx.log.wandb.log_frequency)
 
-    data = get_dataset(ctx)
-    log = WandbLog(ctx, len(data))
+    log = WandbLog(ctx, data_len)
     mean_loss = torch.zeros([], device=ctx.model.device, dtype=torch.float16 if ctx.model.float16 else torch.float)
 
     i = 0
     while True:
         i += 1
 
-        loss = mod.accumulated_step(data)
+        loss = mod.accumulated_step(next(data))
         if ctx.optimizer.sharpness_aware_minimization.enabled:
             with torch.no_grad():
                 for p in mod.gradients():
@@ -32,7 +34,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                     p.add_(p.grad)
                     p.prev_step = p.grad
                     p.grad = None
-            loss = mod.accumulated_step(data)
+            loss = mod.accumulated_step(next(data))
         mod.optimizer.step()
         if ctx.optimizer.sharpness_aware_minimization.enabled:
             with torch.no_grad():
