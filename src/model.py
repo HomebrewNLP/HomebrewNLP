@@ -32,12 +32,13 @@ def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter, typing.List[
 class TripleNorm(torch.autograd.Function):
     @staticmethod
     def forward(ctx, scale0: torch.Tensor, scale1: torch.Tensor, shift: torch.Tensor):
-        inp = torch.nn.functional.relu(scale0).square_() * scale1 + shift
+        scale0_relu = scale0.relu()
+        inp = scale0_relu.square() * scale1 + shift
         inp = inp - inp.mean(1, True)
         scale = inp.size(1) / inp.norm(1, 1, True)
         inp *= scale
         if scale1.requires_grad:
-            ctx.save_for_backward(scale0, scale1, inp, scale)
+            ctx.save_for_backward(scale0_relu, scale1, inp, scale)
             inp.requires_grad_(True)
         return inp
 
@@ -45,7 +46,7 @@ class TripleNorm(torch.autograd.Function):
     def backward(ctx, d_out: torch.Tensor):
         if not len(ctx.saved_tensors):
             return None, None, None
-        scale0, scale1, out, scale = ctx.saved_tensors
+        scale0_relu, scale1, out, scale = ctx.saved_tensors
         d_inp = d_out * scale
         d_inp -= d_inp.mean(1, True)
         normed = out / out.size(1)
@@ -55,7 +56,8 @@ class TripleNorm(torch.autograd.Function):
         normed -= normed.mean(1, True)
         d_tmp *= normed
         d_inp += d_tmp
-        return d_inp * scale1 * scale0 * 2, d_inp * scale0, d_inp
+        d_scale = d_inp * scale0_relu
+        return d_scale * scale1 * 2, d_scale * scale0_relu, d_inp
 
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
