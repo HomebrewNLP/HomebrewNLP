@@ -37,17 +37,20 @@ class TripleNorm(torch.autograd.Function):
         inp = inp - inp.mean(1, True)
         rstd = inp.size(1) ** (1 / norm_power) / inp.norm(norm_power, 1, True)
         inp *= rstd
-        ctx.save_for_backward(scale0_relu, scale1, inp, rstd)
+        if scale1.requires_grad:
+            ctx.save_for_backward(scale0_relu, scale1, inp, rstd)
         return inp
 
     @staticmethod
     def backward(ctx, dout: torch.Tensor):
+        if not ctx.saved_tensors:
+            return None, None, None, None
         scale0_relu, scale1, out, rstd = ctx.saved_tensors
         dout = dout * rstd
         dout -= (dout * out).mean(1, True) * out
         dout -= dout.mean(1, True)
         d_scale = dout * scale0_relu
-        return d_scale * scale1 * 2, d_scale * scale0_relu, dout
+        return d_scale * scale1 * 2, d_scale * scale0_relu, dout, None
 
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
