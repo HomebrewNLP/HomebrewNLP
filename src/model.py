@@ -234,7 +234,7 @@ class AuxLoss(torch.autograd.Function):
     @staticmethod
     def backward(ctx, grad_outputs: torch.Tensor):
         if not ctx.saved_tensors:
-            return None
+            return
         inp, = ctx.saved_tensors
         inp.mean().backward()
 
