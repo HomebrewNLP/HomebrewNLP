@@ -84,6 +84,7 @@ def split_norm(inp: torch.Tensor) -> torch.Tensor:
     return norm(scale0 * scale1 + shift)
 
 
+@torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
@@ -112,22 +113,6 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
     inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
     loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
     return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
-
-
-def get_coupling(beta_tmp: float):
-    def momentum_coupling_forward(other_stream: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return other_stream * beta + fn_out
-
-    def momentum_coupling_inverse(output: torch.Tensor, fn_out: torch.Tensor, beta: float) -> torch.Tensor:
-        return (output - fn_out) / beta
-
-    def _wrapped_momentum_coupling_forward(x, y):
-        return momentum_coupling_forward(x, y, beta_tmp)
-
-    def _wrapped_momentum_coupling_inverse(x, y):
-        return momentum_coupling_inverse(x, y, beta_tmp)
-
-    return _wrapped_momentum_coupling_forward, _wrapped_momentum_coupling_inverse
 
 
 def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
@@ -242,11 +227,14 @@ class LinearAttention(torch.nn.Module):
 class AuxLoss(torch.autograd.Function):
     @staticmethod
     def forward(ctx, inp: torch.Tensor):
-        ctx.save_for_backward(inp)
+        if isinstance(inp, torch.Tensor) and inp.requires_grad:
+            ctx.save_for_backward(inp)
         return inp
 
     @staticmethod
     def backward(ctx, grad_outputs: torch.Tensor):
+        if not ctx.saved_tensors:
+            return None
         inp, = ctx.saved_tensors
         inp.mean().backward()
 
