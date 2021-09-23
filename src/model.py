@@ -31,11 +31,11 @@ def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter, typing.List[
 
 class TripleNorm(torch.autograd.Function):
     @staticmethod
-    def forward(ctx, scale0, scale1, shift):
+    def forward(ctx, scale0: torch.Tensor, scale1: torch.Tensor, shift: torch.Tensor, norm_power: int):
         scale0_relu = scale0.relu()
         inp = scale0_relu.square() * scale1 + shift
         inp = inp - inp.mean(1, True)
-        rstd = inp.size(1) ** 0.5 * inp.square().sum(1, True).rsqrt()
+        rstd = inp.size(1) ** (1 / norm_power) / inp.norm(norm_power, 1, True)
         inp *= rstd
         ctx.save_for_backward(scale0_relu, scale1, inp, rstd)
         return inp
@@ -85,7 +85,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
                      init_scale: float, bottleneck_group: int, training: bool,
-                     caching: bool, idx: int
+                     caching: bool, idx: int, norm_power:int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     pad = True
@@ -104,9 +104,9 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         cum = cum[:, :, -1:]
         if idx - 1 > kernel_size:
             cumsum_cache = cum.detach()
-    inp = TripleNorm.apply(cum / divisor, scale, shift)
+    inp = TripleNorm.apply(cum / divisor, scale, shift, norm_power)
     inp = conv(inp, w1, bottleneck_group, pad)
-    inp = TripleNorm.apply(*inp.chunk(3, 1))
+    inp = TripleNorm.apply(*inp.chunk(3, 1), norm_power)
     loss1, inp = moe_check(inp, w2_gate, w2, 1)
     return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
 
@@ -257,8 +257,8 @@ class LinearAttentionCell(torch.nn.Module):
         self.init_scale = init_scale
         self.caching = ctx.eval.cache
         self.kernel_size = ctx.model.conv_kernel_size
-        self.dropout_probability = 1 - ctx.model.dropout_probability
         self.bottleneck_group = ctx.model.bottleneck_group
+        self.norm_power = ctx.model.norm_power
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
         experts = ctx.model.moe.num_experts
         moe_in_output = ctx.model.moe.use_in_output
@@ -302,7 +302,8 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self.bottleneck_group,
                                                                                     self.training,
                                                                                     self.caching,
-                                                                                    self.idx)
+                                                                                    self.idx,
+                                                                                    self.norm_power)
         AuxLoss.apply(loss0 + loss1)
         return out
 
