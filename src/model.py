@@ -29,29 +29,39 @@ def orthonormal(inp: typing.Union[torch.Tensor, torch.nn.Parameter, typing.List[
     return original_input
 
 
-def norm(out: torch.Tensor) -> torch.Tensor:
-    out = out - out.mean(1, keepdim=True)
-    return out / (torch.norm(out, 2, 1, True) * out.size(1) ** -0.5 + 1e-5)
+class TripleNorm(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, scale0: torch.Tensor, scale1: torch.Tensor, shift: torch.Tensor):
+        inp = torch.nn.functional.relu(scale0).square_() * scale1 + shift
+        inp = inp - inp.mean(1, True)
+        scale = inp.size(1) / inp.norm(1, 1, True)
+        inp *= scale
+        if scale1.requires_grad:
+            ctx.save_for_backward(scale0, scale1, inp, scale)
+            inp.requires_grad_(True)
+        return inp
+
+    @staticmethod
+    def backward(ctx, d_out: torch.Tensor):
+        if not len(ctx.saved_tensors):
+            return None, None, None
+        scale0, scale1, out, scale = ctx.saved_tensors
+        d_inp = d_out * scale
+        d_inp -= d_inp.mean(1, True)
+        normed = out / out.size(1)
+        d_tmp = d_out * normed
+        d_tmp *= scale.square()
+        normed.neg_()
+        normed -= normed.mean(1, True)
+        d_tmp *= normed
+        d_inp += d_tmp
+        return d_inp * scale1 * scale0 * 2, d_inp * scale0, d_inp
 
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
     if use_pad and weight.size()[-1] - 1 > 0:
         inp = torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0))
     return torch.nn.functional.conv1d(inp, weight, groups=groups)
-
-
-def drop_conv(inp: torch.Tensor, weight: torch.Tensor, p: float, train: bool, groups: int, pad: bool) -> torch.Tensor:
-    batch, features, sequence = inp.size()
-    if 0 < p < 1:
-        if train:
-            mask = torch.randn((features,), device=inp.device, dtype=inp.dtype) < p
-            inp = torch.masked_select(inp, mask.view(1, -1, 1)).view(batch, -1, sequence)
-            weight = torch.masked_select(weight, mask.view(-1, 1, 1)).view(-1, weight.size(1), weight.size(2))
-        elif torch.numel(inp) > torch.numel(weight):
-            weight = weight * p
-        else:
-            inp = inp * p
-    return conv(inp, weight, groups, pad)
 
 
 def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
@@ -71,24 +81,18 @@ def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
     return loss, out.view(batch, sequence, -1).transpose(1, 2)
 
 
-def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], dropout_probability: float,
-              training: bool, groups: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], groups: int
+              ) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     if w:
         return moe(inp, w, w_gate)
     return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
-            drop_conv(inp, w_gate, dropout_probability, training, groups, False))
+            conv(inp, w_gate, groups, False))
 
 
-def split_norm(inp: torch.Tensor) -> torch.Tensor:
-    scale0, scale1, shift = inp.chunk(3, 1)
-    return norm(scale0 * scale1 + shift)
-
-
-@torch.jit.script
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
                      w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
                      w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
-                     init_scale: float, bottleneck_group: int, dropout_probability: float, training: bool,
+                     init_scale: float, bottleneck_group: int, training: bool,
                      caching: bool, idx: int
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
@@ -98,7 +102,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
             pad = False
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size + 1:].detach()
-    loss0, inp = moe_check(inp, w0_gate, w0, dropout_probability, training, 1)
+    loss0, inp = moe_check(inp, w0_gate, w0, 1)
     depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
     if not training and caching:
@@ -108,10 +112,10 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
         cum = cum[:, :, -1:]
         if idx - 1 > kernel_size:
             cumsum_cache = cum.detach()
-    inp = torch.nn.functional.leaky_relu(norm(cum / divisor * scale + shift), 0.02)
-    inp = drop_conv(inp, w1, dropout_probability, training, bottleneck_group, pad)
-    inp = torch.nn.functional.leaky_relu(split_norm(inp), 0.02)
-    loss1, inp = moe_check(inp, w2_gate, w2, dropout_probability, training, 1)
+    inp = TripleNorm.apply(cum / divisor, scale, shift)
+    inp = conv(inp, w1, bottleneck_group, pad)
+    inp = TripleNorm.apply(*inp.chunk(3, 1))
+    loss1, inp = moe_check(inp, w2_gate, w2, 1)
     return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
 
 
@@ -233,7 +237,7 @@ class AuxLoss(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_outputs: torch.Tensor):
-        if not ctx.saved_tensors:
+        if not len(ctx.saved_tensors):
             return
         inp, = ctx.saved_tensors
         inp.mean().backward()
@@ -275,7 +279,6 @@ class LinearAttentionCell(torch.nn.Module):
                               ctx.model.activation_std)
         self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features, 1, 1, 1)
         self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
-        # Below is done to ignore pytorch's errors when calling .register_buffer without giving up the IDEs autocomplete
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
@@ -305,8 +308,8 @@ class LinearAttentionCell(torch.nn.Module):
                                                                                     self._cumsum_cache,
                                                                                     self.init_scale,
                                                                                     self.bottleneck_group,
-                                                                                    self.dropout_probability,
-                                                                                    self.training, self.caching,
+                                                                                    self.training,
+                                                                                    self.caching,
                                                                                     self.idx)
         AuxLoss.apply(loss0 + loss1)
         return out
