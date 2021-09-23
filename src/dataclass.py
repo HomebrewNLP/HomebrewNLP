@@ -40,7 +40,7 @@ class Model(DataClass):
     device: str = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     conv_kernel_size: int = 7
     feed_forward_intermediate_factor: float = 2.
-    dropout_probability: float = 0.
+    norm_power: int = 2  # 1 = mean(abs(x)), 2 = std, ...
     bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
     moe: MoE = MoE()
     offloading: bool = False
