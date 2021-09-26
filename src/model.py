@@ -60,24 +60,25 @@ def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) ->
 
 
 def expert_einsum(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    return torch.einsum("bfges,gefo->bgoes", inp, weight)  # transpose g in einsum to shuffle features
+    return torch.einsum("bfges,egfo->bgoes", inp, weight)  # transpose g in einsum to shuffle features
 
 
 def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, feature_shuffle: torch.Tensor, groups: int,
         experts: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
     permutation = torch.argsort(torch.rand(sequence, device=inp.device))
-    permutation_inverse = torch.einsum('ab,a->b', torch.nn.functional.one_hot(permutation), torch.arange(sequence))
-    inp = inp.gather(2, permutation.long().view(1, 1, -1))
+    permutation_inverse = torch.einsum('ab,a->b', torch.nn.functional.one_hot(permutation).float(),
+                                       torch.arange(sequence, device=inp.device).float()).long()
+    inp = inp.gather(2, permutation.long().view(1, 1, -1).expand_as(inp))
     if feature_shuffle is not None:
-        inp = inp.gather(1, feature_shuffle.view(1, -1, 1))
+        inp = inp.gather(1, feature_shuffle.view(1, -1, 1).expand_as(inp))
     inp = inp.view(batch, features // groups, groups, experts, sequence // experts)
     if len(expert_weights) == 1:
         inp = expert_einsum(inp, expert_weights[0])
     else:
         inp = torch.cat([expert_einsum(c, w) for c, w in zip(inp.chunk(len(expert_weights), 3), expert_weights)], 3)
-    inp = inp.view(batch, -1, sequence)
-    inp = inp.gather(2, permutation_inverse.long().view(1, 1, -1))
+    inp = inp.reshape(batch, -1, sequence)
+    inp = inp.gather(2, permutation_inverse.long().view(1, 1, -1).expand_as(inp))
     return inp
 
 
@@ -248,7 +249,7 @@ def get_moe_param(in_features: int, out_features: int, groups: int, experts: int
     if experts:
         experts = groups if experts < 0 else experts
         out = orthonormal([in_features // groups, out_features // groups], std).view(1, 1, in_features // groups, -1)
-        out = out.expand(experts // expert_chunks, groups, -1, -1).clone()
+        out = out.expand(experts // expert_chunks, groups, -1, -1).detach().clone()
         return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)]
     return [torch.nn.Parameter(conv_weight(in_features, out_features, 1, groups, std))]
 
@@ -272,7 +273,7 @@ class LinearAttentionCell(torch.nn.Module):
                                                        self.experts0, self.expert_chunks, ctx.model.activation_std))
         self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
-        self.w0 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features, self.groups2,
+        self.w2 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features, self.groups2,
                                                        self.experts2, self.expert_chunks, 1))
         self.idx: int = 0
         self._input_cache = torch.zeros([])
