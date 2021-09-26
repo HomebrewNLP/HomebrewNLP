@@ -18,12 +18,6 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
     return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
 
-class MoE(DataClass):
-    num_experts: int = 16
-    use_in_input: bool = False
-    use_in_output: bool = False
-
-
 class Model(DataClass):
     checkpoint_path: str = "checkpoint.torch"
     steps_per_checkpoint: int = 0  # 0 -> disabled
@@ -39,11 +33,16 @@ class Model(DataClass):
     float16: bool = False
     device: str = 'cuda:0' if torch.cuda.is_available() else 'cpu'
     conv_kernel_size: int = 7
+    feature_shuffle: bool = False
     feed_forward_intermediate_factor: float = 2.
     norm_power: int = 2  # 1 = mean(abs(x)), 2 = std, ...
-    bottleneck_group = 1  # not all group counts are possible. it has to be divide self.features without residual
-    moe: MoE = MoE()
+    bottleneck_group: int = 1  # not all group counts are possible. it has to be divide self.features without residual
     offloading: bool = False
+    input_groups: int = 4
+    output_groups: int = 4
+    experts_in_input: int = 0  # 0 to disable MoE
+    experts_in_output: int = 0
+    expert_chunks: int = 1  # Increase it if not all MoE parameters fit onto the GPU
 
 
 class Dataset(DataClass):

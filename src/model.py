@@ -59,37 +59,42 @@ def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) ->
     return torch.nn.functional.conv1d(inp, weight, groups=groups)
 
 
-def moe(inp: torch.Tensor, w: typing.List[torch.Tensor],
-        gate: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    out = torch.nn.functional.conv1d(inp, gate)
-    gates = torch.nn.functional.softmax(out, dim=1)
-    one_hot = torch.nn.functional.one_hot(torch.argmax(out, dim=1), num_classes=out.shape[1])
-    gumbel = one_hot.transpose(1, 2) - gates.detach() + gates
-    one_hot = one_hot.to(dtype=torch.bool)
-    inp_t = inp.transpose(1, 2)
+def expert_einsum(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    return torch.einsum("bfges,gefo->bgoes", inp, weight)  # transpose g in einsum to shuffle features
+
+
+def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, feature_shuffle: torch.Tensor, groups: int,
+        experts: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
-    out = torch.empty((batch * sequence, w[0].size(1)), device=inp.device, dtype=inp.dtype)
-    for expert, g, param in zip(one_hot.unbind(-1), gumbel.unbind(1), w):
-        tmp = torch.masked_select(inp_t * g.unsqueeze(2), expert.unsqueeze(2)).view(-1, features).mm(param)
-        out = out.masked_scatter(expert.view(-1, 1), tmp)
-    loss = torch.sum(torch.mean(gates, dim=(0, 2)) * torch.mean(one_hot.float(), dim=(0, 1)))
-    return loss, out.view(batch, sequence, -1).transpose(1, 2)
+    permutation = torch.argsort(torch.rand(sequence, device=inp.device))
+    permutation_inverse = torch.einsum('ab,a->b', torch.nn.functional.one_hot(permutation), torch.arange(sequence))
+    inp = inp.gather(2, permutation.long().view(1, 1, -1))
+    if feature_shuffle is not None:
+        inp = inp.gather(1, feature_shuffle.view(1, -1, 1))
+    inp = inp.view(batch, features // groups, groups, experts, sequence // experts)
+    if len(expert_weights) == 1:
+        inp = expert_einsum(inp, expert_weights[0])
+    else:
+        inp = torch.cat([expert_einsum(c, w) for c, w in zip(inp.chunk(len(expert_weights), 3), expert_weights)], 3)
+    inp = inp.view(batch, -1, sequence)
+    inp = inp.gather(2, permutation_inverse.long().view(1, 1, -1))
+    return inp
 
 
-def moe_check(inp: torch.Tensor, w_gate: torch.Tensor, w: typing.List[torch.Tensor], groups: int
-              ) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    if w:
-        return moe(inp, w, w_gate)
-    return (torch.zeros([1], device=inp.device, dtype=inp.dtype),
-            conv(inp, w_gate, groups, False))
+def moe_check(inp: torch.Tensor, w: torch.nn.ParameterList,
+              feature_shuffle: torch.Tensor, groups: int, experts: int) -> torch.Tensor:
+    return moe(inp, w, feature_shuffle, groups, experts) if experts > 0 else conv(inp, w[0], groups, False)
 
 
-def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Tensor,
-                     w0: typing.List[torch.Tensor], w1: torch.Tensor, w2_gate: torch.Tensor,
-                     w2: typing.List[torch.Tensor], input_cache: torch.Tensor, cumsum_cache: torch.Tensor,
-                     init_scale: float, bottleneck_group: int, training: bool,
-                     caching: bool, idx: int, norm_power:int
-                     ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+def linear_attention(inp: torch.Tensor, divisor: torch.Tensor,
+                     w0: torch.nn.ParameterList,
+                     feature_shuffle0: typing.Optional[torch.Tensor], groups0: int, experts0: int,
+                     w1: torch.Tensor,
+                     w2: torch.nn.ParameterList,
+                     feature_shuffle2: typing.Optional[torch.Tensor], groups2: int, experts2: int,
+                     input_cache: torch.Tensor, cumsum_cache: torch.Tensor, bottleneck_group: int, training: bool,
+                     caching: bool, idx: int, norm_power: int
+                     ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     pad = True
     if not training and caching:
@@ -97,7 +102,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
             pad = False
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size + 1:].detach()
-    loss0, inp = moe_check(inp, w0_gate, w0, 1)
+    inp = moe_check(inp, w0, feature_shuffle0, groups0, experts0)
     depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
     if not training and caching:
@@ -110,8 +115,8 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor, w0_gate: torch.Te
     inp = TripleNorm.apply(cum / divisor, scale, shift, norm_power)
     inp = conv(inp, w1, bottleneck_group, pad)
     inp = TripleNorm.apply(*inp.chunk(3, 1), norm_power)
-    loss1, inp = moe_check(inp, w2_gate, w2, 1)
-    return loss0, loss1, input_cache, cumsum_cache, inp * init_scale
+    inp = moe_check(inp, w2, feature_shuffle2, groups2, experts2)
+    return input_cache, cumsum_cache, inp
 
 
 def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: int, std: float):
@@ -223,21 +228,6 @@ class LinearAttention(torch.nn.Module):
                 mod.reset_cache()
 
 
-class AuxLoss(torch.autograd.Function):
-    @staticmethod
-    def forward(ctx, inp: torch.Tensor):
-        if isinstance(inp, torch.Tensor) and inp.requires_grad:
-            ctx.save_for_backward(inp)
-        return inp
-
-    @staticmethod
-    def backward(ctx, grad_outputs: torch.Tensor):
-        if not len(ctx.saved_tensors):
-            return
-        inp, = ctx.saved_tensors
-        inp.mean().backward()
-
-
 class ParameterStore(torch.nn.Module):
     """
     Something (likely deepspeed) changes all parameters in a ParameterList to [1] even though standalone parameters
@@ -253,6 +243,15 @@ class ParameterStore(torch.nn.Module):
                 f'dtype={self.param.dtype})')
 
 
+def get_moe_param(in_features: int, out_features: int, groups: int, experts: int, expert_chunks: int, std: float
+                  ) -> typing.List[torch.nn.Parameter]:
+    if experts:
+        out = orthonormal([in_features // groups, out_features // groups], std).view(1, 1, in_features // groups, -1)
+        out = out.expand(experts // expert_chunks, groups, -1, -1).clone()
+        return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)]
+    return [torch.nn.Parameter(conv_weight(in_features, out_features, 1, groups, std))]
+
+
 class LinearAttentionCell(torch.nn.Module):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(LinearAttentionCell, self).__init__()
@@ -262,21 +261,27 @@ class LinearAttentionCell(torch.nn.Module):
         self.kernel_size = ctx.model.conv_kernel_size
         self.bottleneck_group = ctx.model.bottleneck_group
         self.norm_power = ctx.model.norm_power
+        self.groups0 = ctx.model.input_groups
+        self.groups2 = ctx.model.output_groups
+        self.experts0 = ctx.model.experts_in_input
+        self.experts2 = ctx.model.experts_in_output
+        self.expert_chunks = ctx.model.expert_chunks
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
-        experts = ctx.model.moe.num_experts
-        moe_in_output = ctx.model.moe.use_in_output
-        moe_in_input = ctx.model.moe.use_in_input
-        param0 = ParameterStore(orthonormal([ctx.model.features, intermediate * 3], ctx.model.activation_std))
-        param2 = ParameterStore(orthonormal([intermediate, ctx.model.features], 1))
-        self.w0_gate = conv_weight(ctx.model.features, experts if moe_in_input else (3 * intermediate), 1, 1, 1)
-        self.w0 = torch.nn.ModuleList([copy.deepcopy(param0) for _ in range(experts * moe_in_input)])
+        self.w0 = torch.nn.ParameterList(get_moe_param(ctx.model.features, intermediate * 3, self.groups0,
+                                                       self.experts0, self.expert_chunks, ctx.model.activation_std))
         self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
                               ctx.model.activation_std)
-        self.w2_gate = conv_weight(intermediate, experts if moe_in_output else ctx.model.features, 1, 1, 1)
-        self.w2 = torch.nn.ModuleList([copy.deepcopy(param2) for _ in range(experts * moe_in_output)])
+        self.w0 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features, self.groups2,
+                                                       self.experts2, self.expert_chunks, 1))
         self.idx: int = 0
         self._input_cache = torch.zeros([])
         self._cumsum_cache = torch.zeros([])
+        if ctx.model.feature_shuffle:
+            self.register_buffer("feature_shuffle0", torch.argsort(torch.randn(ctx.model.features)).view(1, -1, 1))
+            self.register_buffer("feature_shuffle2", torch.argsort(torch.randn(intermediate)).view(1, -1, 1))
+        else:
+            self.feature_shuffle0 = None
+            self.feature_shuffle2 = None
 
     def reset_cache(self):
         self._cumsum_cache = torch.zeros([])
@@ -292,22 +297,17 @@ class LinearAttentionCell(torch.nn.Module):
         else:
             self.idx = inp.size(2)
             div = torch.arange(self.idx, device=inp.device).view(1, 1, -1) + 1
-        loss0, loss1, self._input_cache, self._cumsum_cache, out = linear_attention(inp,
-                                                                                    div,
-                                                                                    self.w0_gate,
-                                                                                    [store.param for store in self.w0],
-                                                                                    self.w1,
-                                                                                    self.w2_gate,
-                                                                                    [store.param for store in self.w2],
-                                                                                    self._input_cache,
-                                                                                    self._cumsum_cache,
-                                                                                    self.init_scale,
-                                                                                    self.bottleneck_group,
-                                                                                    self.training,
-                                                                                    self.caching,
-                                                                                    self.idx,
-                                                                                    self.norm_power)
-        AuxLoss.apply(loss0 + loss1)
+        self._input_cache, self._cumsum_cache, out = linear_attention(inp, div,
+                                                                      self.w0, self.feature_shuffle0, self.groups0,
+                                                                      self.experts0,
+                                                                      self.w1,
+                                                                      self.w2, self.feature_shuffle2, self.groups2,
+                                                                      self.experts2, self._input_cache,
+                                                                      self._cumsum_cache, self.bottleneck_group,
+                                                                      self.training, self.caching, self.idx,
+                                                                      self.norm_power
+                                                                      )
+        out = out * self.init_scale
         return out
 
     def momentum(self, init_scale: float):
