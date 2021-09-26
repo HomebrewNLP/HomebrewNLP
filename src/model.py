@@ -246,6 +246,7 @@ class ParameterStore(torch.nn.Module):
 def get_moe_param(in_features: int, out_features: int, groups: int, experts: int, expert_chunks: int, std: float
                   ) -> typing.List[torch.nn.Parameter]:
     if experts:
+        experts = groups if experts < 0 else experts
         out = orthonormal([in_features // groups, out_features // groups], std).view(1, 1, in_features // groups, -1)
         out = out.expand(experts // expert_chunks, groups, -1, -1).clone()
         return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)]
