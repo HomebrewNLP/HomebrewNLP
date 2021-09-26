@@ -33,7 +33,7 @@ class TripleNorm(torch.autograd.Function):
     @staticmethod
     def forward(ctx, scale0: torch.Tensor, scale1: torch.Tensor, shift: torch.Tensor, norm_power: int):
         scale0_relu = scale0.relu()
-        inp = scale0_relu.square() * scale1 + shift
+        inp = scale0_relu.pow(3) * scale1 + shift
         inp = inp - inp.mean(1, True)
         rstd = inp.size(1) ** (1 / norm_power) / inp.norm(norm_power, 1, True)
         inp *= rstd
@@ -49,8 +49,8 @@ class TripleNorm(torch.autograd.Function):
         dout = dout * rstd
         dout -= (dout * out).mean(1, True) * out
         dout -= dout.mean(1, True)
-        d_scale = dout * scale0_relu
-        return d_scale * scale1 * 2, d_scale * scale0_relu, dout, None
+        d_scale = dout * scale0_relu.square()
+        return d_scale * scale1 * 3, d_scale * scale0_relu, dout, None
 
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
