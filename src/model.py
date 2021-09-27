@@ -80,22 +80,37 @@ def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, training: boo
     *expert_weights, gate = expert_weights
     batch, features, sequence = inp.size()
     tokens = batch * sequence
-    permutation = torch.argsort(torch.rand(tokens, device=inp.device)).long()
-    permutation_inverse = torch.arange(tokens, device=inp.device).gather(0, permutation)
-    inp = inp.transpose(1, 2).reshape(tokens, features)
-    inp = inp.gather(0, permutation.view(-1, 1).expand_as(inp))
+    capacity = tokens // experts
+
+    # get gates
     if gate.dtype != torch.float32:
         gate = gate.float()
+    inp = inp.transpose(1, 2).reshape(tokens, features)
     input_fp32 = inp.float()
     if training:
         input_fp32 = input_fp32 * (torch.rand_like(input_fp32) * jitter_epsilon + 1)
     logits = input_fp32.mm(gate)
+    gates = F.softmax(logits, dim=1)
+
+    # calculate permutation
     with torch.no_grad():
-        mask = F.one_hot(torch.argmax(logits, dim=1), num_classes=experts).detach()
-        _, top_idx = torch.topk(mask + torch.rand(mask.shape, device=logits.device), k=tokens // experts, dim=0)
-        new_mask = mask * torch.zeros_like(mask).scatter_(0, top_idx, 1)
-        location = new_mask.cumsum(dim=0).sub(1).mul(new_mask).detach()
-    AuxLoss(F.softmax(logits, dim=1).sum(0).mul(mask.float().sum(0)).sum() * (experts / tokens ** 2))
+        mask = torch.ones_like(gates[:, 0])
+        out = []
+        for g in gates.unbind(1):
+            _, idx = torch.topk(g * mask, capacity, 0)
+            out.append(idx)
+            mask[idx] -= 1
+        expert_permutation = torch.stack(out, 1)
+        expert_permutation = expert_permutation.view(-1, 1).long()
+        permutation_inverse = torch.argsort(expert_permutation, 0).view(-1, 1)
+        expert_index = permutation_inverse // capacity
+
+    # apply loss
+    AuxLoss(gates.sum() / tokens)
+    inp = inp * gates.gather(1, expert_index)
+
+    # permute
+    inp = inp.gather(0, expert_permutation.expand_as(inp))
 
     if feature_shuffle is not None:
         inp = inp.gather(1, feature_shuffle.view(1, -1).expand_as(inp))
