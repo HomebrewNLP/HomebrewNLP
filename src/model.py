@@ -4,9 +4,9 @@ import typing
 import numpy as np
 import revlib
 import torch
-import torch.nn.functional
 import torch.utils.data
 from deepspeed.runtime import lr_schedules
+from torch.nn import functional as F
 
 from src.dataclass import Context
 from src.optimizers.build import build_optimizer
@@ -55,37 +55,66 @@ class TripleNorm(torch.autograd.Function):
 
 def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) -> torch.Tensor:
     if use_pad and weight.size()[-1] - 1 > 0:
-        inp = torch.nn.functional.pad(inp, (weight.size()[-1] - 1, 0))
-    return torch.nn.functional.conv1d(inp, weight, groups=groups)
+        inp = F.pad(inp, (weight.size()[-1] - 1, 0))
+    return F.conv1d(inp, weight, groups=groups)
 
 
 def expert_matmul(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     return torch.einsum("bgf,gfo->bgo", inp, weight)
 
 
-def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, feature_shuffle: torch.Tensor, groups: int,
-        experts: int) -> torch.Tensor:
+class AuxLoss(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, inp: torch.Tensor):
+        ctx.save_for_backward(inp)
+        return inp
+
+    @staticmethod
+    def backward(ctx, grad_outputs: torch.Tensor):
+        inp, = ctx.saved_tensors
+        inp.mean().backward()
+
+
+def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, training: bool,
+        jitter_epsilon: float, feature_shuffle: torch.Tensor, groups: int, experts: int) -> torch.Tensor:
+    *expert_weights, gate = expert_weights
     batch, features, sequence = inp.size()
-    permutation = torch.argsort(torch.rand(batch * sequence, device=inp.device)).long()
-    permutation_inverse = torch.arange(batch * sequence, device=inp.device).gather(0, permutation)
-    inp = inp.transpose(1, 2).reshape(batch * sequence, features)
+    tokens = batch * sequence
+    permutation = torch.argsort(torch.rand(tokens, device=inp.device)).long()
+    permutation_inverse = torch.arange(tokens, device=inp.device).gather(0, permutation)
+    inp = inp.transpose(1, 2).reshape(tokens, features)
     inp = inp.gather(0, permutation.view(-1, 1).expand_as(inp))
+    if gate.dtype != torch.float32:
+        gate = gate.float()
+    input_fp32 = inp.float()
+    if training:
+        input_fp32 = input_fp32 * (torch.rand_like(input_fp32) * jitter_epsilon + 1)
+    logits = input_fp32.mm(gate)
+    with torch.no_grad():
+        mask = F.one_hot(torch.argmax(logits, dim=1), num_classes=experts).detach()
+        _, top_idx = torch.topk(mask + torch.rand(mask.shape, device=logits.device), k=tokens // experts, dim=0)
+        new_mask = mask * torch.zeros_like(mask).scatter_(0, top_idx, 1)
+        location = new_mask.cumsum(dim=0).sub(1).mul(new_mask).detach()
+    AuxLoss(F.softmax(logits, dim=1).sum(0).mul(mask.float().sum(0)).sum() * (experts / tokens ** 2))
+
     if feature_shuffle is not None:
         inp = inp.gather(1, feature_shuffle.view(1, -1).expand_as(inp))
-    inp = inp.view(batch * sequence // experts, experts * groups, features // groups)
+    inp = inp.view(tokens // experts, experts * groups, features // groups)
     if len(expert_weights) == 1:
         inp = expert_matmul(inp, expert_weights[0])
     else:
         inp = torch.cat([expert_matmul(c, w) for c, w in zip(inp.chunk(len(expert_weights), 1), expert_weights)], -1)
-    inp = inp.reshape(batch * sequence, -1)
+    inp = inp.reshape(tokens, -1)
     inp = inp.gather(0, permutation_inverse.view(-1, 1).expand_as(inp))
     inp = inp.view(batch, sequence, -1).transpose(1, 2)
     return inp
 
 
-def moe_check(inp: torch.Tensor, w: torch.nn.ParameterList,
-              feature_shuffle: torch.Tensor, groups: int, experts: int) -> torch.Tensor:
-    return moe(inp, w, feature_shuffle, groups, experts) if experts > 0 else conv(inp, w[0], groups, False)
+def moe_check(inp: torch.Tensor, w: torch.nn.ParameterList, training: bool,
+              jitter_epsilon: float, feature_shuffle: torch.Tensor, groups: int, experts: int) -> torch.Tensor:
+    if experts > 0:
+        return moe(inp, w, training, jitter_epsilon, feature_shuffle, groups, experts)
+    return conv(inp, w[0], groups, False)
 
 
 def linear_attention(inp: torch.Tensor, divisor: torch.Tensor,
@@ -95,7 +124,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor,
                      w2: torch.nn.ParameterList,
                      feature_shuffle2: typing.Optional[torch.Tensor], groups2: int, experts2: int,
                      input_cache: torch.Tensor, cumsum_cache: torch.Tensor, bottleneck_group: int, training: bool,
-                     caching: bool, idx: int, norm_power: int
+                     caching: bool, idx: int, norm_power: int, jitter_epsilon: float
                      ) -> typing.Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
     kernel_size = w1.size(2)
     pad = True
@@ -104,7 +133,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor,
             pad = False
             inp = torch.cat([input_cache, inp], -1)
         input_cache = inp[:, :, -kernel_size + 1:].detach()
-    inp = moe_check(inp, w0, feature_shuffle0, groups0, experts0)
+    inp = moe_check(inp, w0, training, jitter_epsilon, feature_shuffle0, groups0, experts0)
     depth, scale, shift = inp.chunk(3, 1)
     cum = depth.cumsum(-1)
     if not training and caching:
@@ -117,7 +146,7 @@ def linear_attention(inp: torch.Tensor, divisor: torch.Tensor,
     inp = TripleNorm.apply(cum / divisor, scale, shift, norm_power)
     inp = conv(inp, w1, bottleneck_group, pad)
     inp = TripleNorm.apply(*inp.chunk(3, 1), norm_power)
-    inp = moe_check(inp, w2, feature_shuffle2, groups2, experts2)
+    inp = moe_check(inp, w2, training, jitter_epsilon, feature_shuffle2, groups2, experts2)
     return input_cache, cumsum_cache, inp
 
 
@@ -151,7 +180,7 @@ class Trainer(torch.nn.Module):
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
 
     def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        loss = torch.nn.functional.cross_entropy(self.model(self._to_device_detach(src)), self._to_device_detach(tgt))
+        loss = F.cross_entropy(self.model(self._to_device_detach(src)), self._to_device_detach(tgt))
         loss.backward()
         return loss.detach()
 
@@ -250,8 +279,9 @@ def get_moe_param(in_features: int, out_features: int, groups: int, experts: int
     if experts:
         experts = groups if experts < 0 else experts
         out = orthonormal([in_features // groups, out_features // groups], std).view(1, in_features // groups, -1)
-        out = out.expand(experts // expert_chunks * groups, -1, -1).detach().clone()
-        return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)]
+        out = out.repeat(experts // expert_chunks * groups, 1, 1).detach()
+        gate = [orthonormal([in_features, experts], 1)]
+        return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)] + gate
     return [torch.nn.Parameter(conv_weight(in_features, out_features, 1, groups, std))]
 
 
@@ -268,6 +298,7 @@ class LinearAttentionCell(torch.nn.Module):
         self.groups2 = ctx.model.output_groups
         self.experts0 = ctx.model.experts_in_input
         self.experts2 = ctx.model.experts_in_output
+        self.jitter_epsilon = ctx.model.moe_jitter_epsilon
         self.expert_chunks = ctx.model.expert_chunks
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
         self.w0 = torch.nn.ParameterList(get_moe_param(ctx.model.features, intermediate * 3, self.groups0,
@@ -308,7 +339,7 @@ class LinearAttentionCell(torch.nn.Module):
                                                                       self.experts2, self._input_cache,
                                                                       self._cumsum_cache, self.bottleneck_group,
                                                                       self.training, self.caching, self.idx,
-                                                                      self.norm_power
+                                                                      self.norm_power, self.jitter_epsilon
                                                                       )
         out = out * self.init_scale
         return out

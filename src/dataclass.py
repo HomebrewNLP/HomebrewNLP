@@ -42,6 +42,7 @@ class Model(DataClass):
     output_groups: int = 4
     experts_in_input: int = 0  # 0 to disable MoE
     experts_in_output: int = 0
+    moe_jitter_epsilon: float = 0.02
     expert_chunks: int = 1  # Increase it if not all MoE parameters fit onto the GPU
 
 
