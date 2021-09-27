@@ -59,26 +59,27 @@ def conv(inp: torch.Tensor, weight: torch.Tensor, groups: int, use_pad: bool) ->
     return torch.nn.functional.conv1d(inp, weight, groups=groups)
 
 
-def expert_einsum(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
-    return torch.einsum("bfges,egfo->bgoes", inp, weight)  # transpose g in einsum to shuffle features
+def expert_matmul(inp: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
+    return torch.einsum("bgf,gfo->bgo", inp, weight)
 
 
 def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, feature_shuffle: torch.Tensor, groups: int,
         experts: int) -> torch.Tensor:
     batch, features, sequence = inp.size()
-    permutation = torch.argsort(torch.rand(sequence, device=inp.device))
-    permutation_inverse = torch.einsum('ab,a->b', torch.nn.functional.one_hot(permutation).float(),
-                                       torch.arange(sequence, device=inp.device).float()).long()
-    inp = inp.gather(2, permutation.long().view(1, 1, -1).expand_as(inp))
+    permutation = torch.argsort(torch.rand(batch * sequence, device=inp.device)).long()
+    permutation_inverse = torch.arange(batch * sequence, device=inp.device).gather(0, permutation)
+    inp = inp.transpose(1, 2).reshape(batch * sequence, features)
+    inp = inp.gather(0, permutation.view(-1, 1).expand_as(inp))
     if feature_shuffle is not None:
-        inp = inp.gather(1, feature_shuffle.view(1, -1, 1).expand_as(inp))
-    inp = inp.view(batch, features // groups, groups, experts, sequence // experts)
+        inp = inp.gather(1, feature_shuffle.view(1, -1).expand_as(inp))
+    inp = inp.view(batch * sequence // experts, experts * groups, features // groups)
     if len(expert_weights) == 1:
-        inp = expert_einsum(inp, expert_weights[0])
+        inp = expert_matmul(inp, expert_weights[0])
     else:
-        inp = torch.cat([expert_einsum(c, w) for c, w in zip(inp.chunk(len(expert_weights), 3), expert_weights)], 3)
-    inp = inp.reshape(batch, -1, sequence)
-    inp = inp.gather(2, permutation_inverse.long().view(1, 1, -1).expand_as(inp))
+        inp = torch.cat([expert_matmul(c, w) for c, w in zip(inp.chunk(len(expert_weights), 1), expert_weights)], -1)
+    inp = inp.reshape(batch * sequence, -1)
+    inp = inp.gather(0, permutation_inverse.view(-1, 1).expand_as(inp))
+    inp = inp.view(batch, sequence, -1).transpose(1, 2)
     return inp
 
 
@@ -248,8 +249,8 @@ def get_moe_param(in_features: int, out_features: int, groups: int, experts: int
                   ) -> typing.List[torch.nn.Parameter]:
     if experts:
         experts = groups if experts < 0 else experts
-        out = orthonormal([in_features // groups, out_features // groups], std).view(1, 1, in_features // groups, -1)
-        out = out.expand(experts // expert_chunks, groups, -1, -1).detach().clone()
+        out = orthonormal([in_features // groups, out_features // groups], std).view(1, in_features // groups, -1)
+        out = out.expand(experts // expert_chunks * groups, -1, -1).detach().clone()
         return [torch.nn.Parameter(copy.deepcopy(out)) for _ in range(expert_chunks)]
     return [torch.nn.Parameter(conv_weight(in_features, out_features, 1, groups, std))]
 
