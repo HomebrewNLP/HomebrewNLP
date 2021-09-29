@@ -99,7 +99,7 @@ def moe(inp: torch.Tensor, expert_weights: torch.nn.ParameterList, training: boo
         for g in gates.unbind(1):
             _, idx = torch.topk(g * mask, capacity, 0)
             out.append(idx)
-            mask[idx] -= 1
+            mask[idx] = 0
         expert_permutation = torch.stack(out, 1)
         expert_permutation = expert_permutation.view(-1, 1).long()
         permutation_inverse = torch.argsort(expert_permutation, 0).view(-1, 1)
@@ -259,7 +259,7 @@ class LinearAttention(torch.nn.Module):
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth)
                                                   for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
-                                                                          ctx.model.momentumnet_beta ** i),
+                                                                          ctx.model.momentumnet_beta ** i, not ctx.model.weight_sharing),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** i)]],
                                                 target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
@@ -359,7 +359,7 @@ class LinearAttentionCell(torch.nn.Module):
         out = out * self.init_scale
         return out
 
-    def momentum(self, init_scale: float):
-        out = copy.deepcopy(self)
+    def momentum(self, init_scale: float, deep: bool):
+        out = copy.deepcopy(self) if deep else copy.copy(self)
         out.init_scale = init_scale
         return out
