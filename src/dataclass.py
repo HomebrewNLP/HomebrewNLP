@@ -39,8 +39,8 @@ class Model(DataClass):
     norm_power: int = 2  # 1 = mean(abs(x)), 2 = std, ...
     bottleneck_group: int = 1  # not all group counts are possible. it has to be divide self.features without residual
     offloading: bool = False
-    input_groups: int = 4
-    output_groups: int = 4
+    input_groups: int = 1
+    output_groups: int = 1
     experts_in_input: int = 0  # 0 to disable MoE
     experts_in_output: int = 0
     moe_jitter_epsilon: float = 0.02
