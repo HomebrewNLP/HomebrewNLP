@@ -35,17 +35,21 @@ def log(*data, log_locals: bool = False):
 class WandbLog:
     def __init__(self, ctx: Context, steps: int):
         self.mean_loss = 0
+        self.mean_max_loss = 0
         self.start_time = time.time()
         self.ctx = ctx
         self.idx = 0
         self.prev = 0
         self.steps = steps
 
-    def __call__(self, current_loss: torch.Tensor, learning_rate: float, betas: typing.Tuple[float, float]):
+    def __call__(self, current_loss: torch.Tensor, max_loss: torch.Tensor, learning_rate: float,
+                 betas: typing.Tuple[float, float]):
         grad_accum = self.ctx.optimizer.gradient_accumulation_steps
         curr_loss = current_loss.item() / self.ctx.log.loss_steps_per_print / grad_accum
+        curr_max_loss = max_loss.item() / self.ctx.log.loss_steps_per_print / grad_accum
         self.idx += 1
         self.mean_loss = (self.mean_loss * self.prev + curr_loss * self.idx) / (self.prev + self.idx)  # LWMA
+        mean_max = self.mean_max_loss = (self.mean_max_loss * self.prev + max_loss * self.idx) / (self.prev + self.idx)
         self.prev += self.idx
 
         rate = self.ctx.log.loss_steps_per_print * self.idx / (time.time() - self.start_time)
@@ -59,8 +63,14 @@ class WandbLog:
                      f"Beta2: {betas[1]:.3f} |",
                      f"Batch/s: {rate:6.3f} -",
                      f"Tokens/day: {tokens_per_day:11,.0f}")
+
+        if not self.ctx.optimizer.sharpness_aware_minimization.enabled:
+            curr_max_loss = None
+            mean_max = None
         wandb.log({"Loss/Current": curr_loss,
                    "Loss/Mean": self.mean_loss,
+                   "Loss/Current Max": curr_max_loss,
+                   "Loss/Mean Max": mean_max,
                    "Speed/Batches per Second": rate,
                    "Speed/Tokens per Day": tokens_per_day,
                    "Optimizer/Learning Rate": learning_rate,
