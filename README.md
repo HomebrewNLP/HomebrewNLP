@@ -27,9 +27,9 @@ python3 main.py train --config_path configs/small.yaml
 ### BibTeX
 
 ```bibtex
-@misc{hnlp2021homebrewnlp,
-  author = {Lucas Nestler, David Gill},
-  title = {HomebrewNLP},
+@misc{nestler2021homebrewnlp,
+  title = {{HomebrewNLP}},
+  author = {Nestler, Lucas and Gill, David},
   year = {2021},
   publisher = {GitHub},
   journal = {GitHub repository},
