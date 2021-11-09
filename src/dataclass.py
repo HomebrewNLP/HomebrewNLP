@@ -1,7 +1,6 @@
 import pathlib
-import typing
-
 import torch
+import typing
 import yaml
 
 
@@ -24,6 +23,7 @@ class Model(DataClass):
     steps_per_checkpoint: int = 0  # 0 -> disabled
     print_on_init: bool = True
     features: int = 256
+    sum_attention_level: int = 0
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
     depth: int = 64
     batch_size: int = 128
