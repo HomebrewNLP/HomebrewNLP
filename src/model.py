@@ -1,9 +1,10 @@
 import copy
+import typing
+
 import numpy as np
 import revlib
 import torch
 import torch.utils.data
-import typing
 from deepspeed.runtime import lr_schedules
 from torch.nn import functional as F
 
@@ -337,10 +338,12 @@ class SumAttention(FeedForward):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(SumAttention, self).__init__(base, ctx, init_scale, ctx.model.sum_attention_level)
         self.sum_attention_level = ctx.model.sum_attention_level
+        self.weight = conv_weight(ctx.model.features, ctx.model.features, 3, 1, 1)
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         out = self._ff(inp).chunk(self.sum_attention_level, 1)
         batch, features, seq = out[0].size()
-        return sum(f(out[0] + sum(out[inner + 1][outer // batch ** inner % batch]
-                                  for inner in range(self.sum_attention_level)).unsqueeze(0))
+        return sum(conv(torch.relu(out[0] + sum(out[inner + 1][outer // batch ** inner % batch]
+                                                for inner in range(self.sum_attention_level)).unsqueeze(0)),
+                        self.weight, 1, True)
                    for outer in range(batch ** (self.sum_attention_level - 1)))
