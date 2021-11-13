@@ -4,6 +4,7 @@ import typing
 import numpy as np
 import revlib
 import torch
+import torch.nn.functional
 import torch.utils.data
 from deepspeed.runtime import lr_schedules
 from torch.nn import functional as F
@@ -236,11 +237,13 @@ class LinearAttention(torch.nn.Module):
                                                   for i in range(1, 1 + ctx.model.depth * 2, 2)
                                                   for c in [ff.momentum((1 - ctx.model.momentumnet_beta) /
                                                                         ctx.model.momentumnet_beta ** i,
-                                                                        not ctx.model.weight_sharing),
+                                                                        not ctx.model.weight_sharing,
+                                                                        i + 1),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** i),
                                                             attn.momentum((1 - ctx.model.momentumnet_beta) /
                                                                           ctx.model.momentumnet_beta ** (i + 1),
-                                                                          not ctx.model.weight_sharing),
+                                                                          not ctx.model.weight_sharing,
+                                                                          i + 1),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
                                                 target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
@@ -284,6 +287,7 @@ def get_moe_param(in_features: int, out_features: int, groups: int, experts: int
 class FeedForward(torch.nn.Module):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float, feature_factor: float):
         super(FeedForward, self).__init__()
+        self.ctx = ctx
         self.divisor = lambda: base.divisor
         self.init_scale = init_scale
         self.caching = ctx.eval.cache
@@ -305,6 +309,29 @@ class FeedForward(torch.nn.Module):
         self.w2 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features * feature_factor, self.groups2,
                                                        self.experts2, self.expert_chunks, 1))
         self.idx: int = 0
+        self.depth: int = 0
+        self.get_last: bool = True
+
+    def _cut_off(self, inp: torch.Tensor) -> torch.Tensor:
+        if inp.size(2) == self.ctx.model.sequence_length:
+            return inp
+
+        base_len = self.ctx.model.sequence_length * self.depth
+        max_len = base_len + self.ctx.model.sequence_length
+        if self.get_last:
+            return inp[base_len:max_len]
+        return inp[:max_len]
+
+    def _pad(self, inp: torch.Tensor, out: torch.Tensor):
+        if inp.size(2) == out.size(2):
+            return inp
+
+        batch, features, sequence = inp.size()
+        if self.get_last:
+            return torch.cat([torch.zeros((batch, features, self.ctx.model.sequence_length * self.depth)), out.size(),
+                              torch.zeros((batch, features,
+                                           sequence - self.ctx.model.sequence_length * (self.depth + 1)))], 2)
+        return torch.cat([out.size(), torch.zeros((batch, features, sequence - out.size()))], 2)
 
     def _ff(self, inp: torch.Tensor) -> torch.Tensor:
         return linear_attention(inp, self.w0, self.groups0, self.experts0, self.w1, self.w2, self.groups2,
@@ -312,11 +339,12 @@ class FeedForward(torch.nn.Module):
                                 self.bottleneck_group, self.training, self.norm_power, self.jitter_epsilon)
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        return self._ff(inp) * self.init_scale
+        return self._pad(inp, self._ff(self._cut_off(inp))) * self.init_scale
 
-    def momentum(self, init_scale: float, deep: bool):
+    def momentum(self, init_scale: float, deep: bool, depth: int):
         out = copy.deepcopy(self) if deep else copy.copy(self)
         out.init_scale = init_scale
+        out.depth = depth
         return out
 
 
@@ -347,3 +375,12 @@ class SumAttention(FeedForward):
                                                 for inner in range(self.sum_attention_level)).unsqueeze(0)),
                         self.weight, 1, True)
                    for outer in range(batch ** (self.sum_attention_level - 1)))
+
+
+class OmnidirectionalAttention(FFTAttention):
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.get_last = False
+
+    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+        return super().forward(inp)
