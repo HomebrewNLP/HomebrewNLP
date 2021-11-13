@@ -1,3 +1,5 @@
+import multiprocessing
+import random
 import typing
 
 import torch
@@ -13,43 +15,47 @@ def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> typin
     return dat[:, :-1], dat[:, 1:]
 
 
-class Dataset(torch.utils.data.Dataset):
-    data: torch.Tensor
-
-    def __init__(self, ctx: Context, workers: int):
+class Dataset:
+    def __init__(self, ctx: Context, queue: multiprocessing.Queue, length: int):
         self.ctx = ctx
-        self.workers = workers
-        data = torch.load(self.ctx.dataset.file_name)
-        self.offset = self.ctx.model.batch_size * self.ctx.model.sequence_length
-        self.length = data.size(0) - self.offset
-
-        batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
-        item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
-        self.batch_index = batch_index + item_index
-        self.worker_id: int = 0
-        self.slice_size = data.size(0) // self.workers
+        self.length = length
+        self.queue = queue
 
     def __len__(self):
         return self.length
 
-    def __getitem__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-        return get_sample(self.data, self.batch_index, idx % (self.slice_size - self.offset))
+    def __iter__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+        yield next(self)
 
-    @torch.no_grad()
-    def set_id(self, worker_id: int):
-        self.worker_id = worker_id
-        data = torch.load(self.ctx.dataset.file_name)
-        self.data = data[self.slice_size * worker_id: self.slice_size * (worker_id + 1)].detach()
+    def __next__(self):
+        items = [self.queue.get() for _ in range(self.ctx.optimizer.gradient_accumulation_steps)]
+        return torch.stack([itm[0] for itm in items], 0), torch.stack([itm[1] for itm in items], 0)
 
 
-def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
+def _process_fn(ctx: Context, queue: multiprocessing.Queue, idx: int, worker_count: int):
+    data = torch.load(ctx.dataset.file_name)
+    data_len = data.size(0) // worker_count
+    data = data[data_len * idx:data_len * (idx + 1)]
+    batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
+    item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
+    batch_index = batch_index + item_index
+    length = data.size(0) - ctx.model.batch_size * ctx.model.sequence_length
+
+    random.seed(idx)
+    while True:
+        queue.put(get_sample(data, batch_index, random.randint(0, length)))
+
+
+def get_dataset(ctx: Context) -> Dataset:
     if ctx.dataset.prefetch_factor < ctx.dataset.num_workers:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
+    queue = multiprocessing.Queue(ctx.dataset.prefetch_factor)
     workers = min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor)
-    dset = Dataset(ctx, workers)
-    return torch.utils.data.DataLoader(dset, ctx.optimizer.gradient_accumulation_steps, False,
-                                       num_workers=workers, pin_memory=ctx.dataset.pin_memory,
-                                       prefetch_factor=ctx.dataset.prefetch_factor,
-                                       worker_init_fn=dset.set_id)
+    procs = [multiprocessing.Process(target=_process_fn, args=(ctx, queue, idx, workers), daemon=True) for idx in
+             range(workers)]
+    for p in procs:
+        p.start()
+    data = torch.load(ctx.dataset.file_name)
+    return Dataset(ctx, queue, data.size(0))

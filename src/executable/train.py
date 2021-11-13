@@ -13,7 +13,6 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
 
     data = get_dataset(ctx)
     data_len = len(data)
-    data = iter(data)
     next_data = next(data)[0]
     mod = get_model(ctx, load_model, next_data)
     wandb.watch(mod, log=ctx.log.wandb.model_log_type, log_freq=ctx.log.wandb.log_frequency)
