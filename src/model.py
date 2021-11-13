@@ -238,6 +238,7 @@ class LinearAttention(torch.nn.Module):
             raise ValueError(f"{ctx.model.attention} is not a known type of attention. You can pick any of the"
                              f" following: {modules}")
         attn = attention_modules[modules.index(ctx.model.attention)](self, ctx, 1)
+        self.expand_sequence = attn.get_last | ff.get_last
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth * 2, 2)
                                                   for c in [ff.momentum((1 - ctx.model.momentumnet_beta) /
@@ -255,7 +256,11 @@ class LinearAttention(torch.nn.Module):
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
-        return self.output(self.stem(self.embedding(inp).transpose(1, 2)))
+        inp = self.embedding(inp).transpose(1, 2)
+        if self.expand_sequence:
+            batch, features, sequence = inp.size()
+            inp = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)))], 2)
+        return self.output(self.stem(inp))
 
     def reset_cache(self):
         for mod in self.stem.modules():
@@ -362,7 +367,7 @@ class FFTAttention(FeedForward):
         out = torch.view_as_real(torch.fft.rfft(inp, 2 * sequence))
         out = out.transpose(2, 3).reshape(batch, features * 2, sequence + 1)
         out = self._ff(out)
-        out = out.view(batch, features, 2, sequence + 1).transpose(2, 3)
+        out = out.view(batch, features, 2, sequence + 1).transpose(2, 3).contiguous()
         out = torch.view_as_complex(out)
         return torch.fft.irfft(out, 2 * sequence)[:, :, :sequence]
 
@@ -387,7 +392,5 @@ class OmnidirectionalAttention(FFTAttention):
         super().__init__(*args, **kwargs)
         self.get_last = False
 
-    def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        return super().forward(inp)
 
 attention_modules = [FeedForward, FFTAttention, SumAttention, OmnidirectionalAttention]
