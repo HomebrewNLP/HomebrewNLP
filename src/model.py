@@ -256,11 +256,17 @@ class LinearAttention(torch.nn.Module):
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
-        inp = self.embedding(inp).transpose(1, 2)
+        out = inp = self.embedding(inp).transpose(1, 2)
         if self.expand_sequence:
             batch, features, sequence = inp.size()
-            inp = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)))], 2)
-        return self.output(self.stem(inp))
+            out = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)), device=inp.device,
+                                              dtype=inp.dtype)], 2)
+        out = self.output(self.stem(out))
+
+        if self.expand_sequence:
+            batch, features, sequence = inp.size()
+            inp = out.view(batch, features // 2, -1, sequence).mean(2)
+        return inp
 
     def reset_cache(self):
         for mod in self.stem.modules():
