@@ -1,3 +1,5 @@
+import multiprocessing
+import random
 import typing
 
 import torch
@@ -13,26 +15,46 @@ def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> typin
     return dat[:, :-1], dat[:, 1:]
 
 
-class Dataset(torch.utils.data.Dataset):
-    def __init__(self, ctx: Context):
-        self.data = torch.load(ctx.dataset.file_name)
-        batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
-        item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
-        self.batch_index = batch_index + item_index
-        self.length = self.data.size(0) - ctx.model.batch_size * ctx.model.sequence_length
+class Dataset:
+    def __init__(self, ctx: Context, length: int, queue: multiprocessing.Queue):
+        self.length = length
+        self.batch = ctx.optimizer.gradient_accumulation_steps
+        self.queue = queue
 
     def __len__(self):
         return self.length
 
-    def __getitem__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-        return get_sample(self.data, self.batch_index, idx)
+    def __iter__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+        yield next(self)
+
+    def __next__(self):
+        return self.queue.get()
 
 
-def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
+def _get_process_fn(ctx: Context, queue: multiprocessing.Queue) -> typing.Tuple[typing.Callable[[int], None], int]:
+    data = torch.load(ctx.dataset.file_name)
+    batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
+    item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
+    batch_index = batch_index + item_index
+    length = data.size(0) - ctx.model.batch_size * ctx.model.sequence_length
+
+    def _fn(idx):
+        random.seed(idx)
+        while True:
+            queue.put(get_sample(data, batch_index, random.randint(0, length)))
+
+    return _fn, length
+
+
+def get_dataset(ctx: Context) -> Dataset:
     if ctx.dataset.prefetch_factor < ctx.dataset.num_workers:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
-    return torch.utils.data.DataLoader(Dataset(ctx), ctx.optimizer.gradient_accumulation_steps, True,
-                                       num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
-                                       pin_memory=ctx.dataset.pin_memory, prefetch_factor=ctx.dataset.prefetch_factor)
+    queue = multiprocessing.Queue(ctx.dataset.prefetch_factor)
+    proc_fn, length = _get_process_fn(ctx, queue)
+    procs = [multiprocessing.Process(target=proc_fn, args=(idx,), daemon=True)
+             for idx in range(min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor))]
+    for p in procs:
+        p.start()
+    return Dataset(ctx, length, queue)
