@@ -19,7 +19,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class Model(DataClass):
-    attention: str = "OmnidirectionalAttention"
+    attention: str = "FFTAttention"
     weight_sharing: bool = False
     checkpoint_path: str = "checkpoint.torch"
     steps_per_checkpoint: int = 0  # 0 -> disabled
@@ -134,7 +134,7 @@ class Optimizer(DataClass):
     statistics_compute_steps: int = 1
     block_size: int = 128
     best_effort_shape_interpretation: bool = True
-    graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
+    graft_type: str = 'SGD'  # 'Adagrad' or 'SGD'
     nesterov: bool = True
     no_preconditioning_for_layers_with_dim_gt: int = 8192
 
