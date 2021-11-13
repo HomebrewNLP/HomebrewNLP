@@ -40,7 +40,6 @@ def setup_torch(seed: int):
 
 
 def get_model(ctx: Context, load_model: bool, data: typing.Optional[torch.Tensor] = None) -> Trainer:
-    pritn("Get model")
     mod = Trainer(ctx, LinearAttention(ctx).to(dtype=torch.float16 if ctx.model.float16 else torch.float),
                   data if data is None else None)
 

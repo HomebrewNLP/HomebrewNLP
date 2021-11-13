@@ -225,9 +225,7 @@ class MomentumNetSide(torch.nn.Module):
 class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
-        print("Enter Linear attention")
         self.embedding = torch.nn.Embedding(ctx.dataset.classes, ctx.model.features * 2).to(ctx.model.device)
-        print("EMbedding")
         orthonormal(self.embedding.weight, ctx.model.input_embedding_std * 2 ** -0.5)
 
         pos_embd = torch.arange(0, ctx.model.sequence_length).unsqueeze(0) + 1
@@ -241,7 +239,6 @@ class LinearAttention(torch.nn.Module):
                              f" following: {modules}")
         attn = attention_modules[modules.index(ctx.model.attention)](self, ctx, 1)
         self.expand_sequence = attn.get_last | ff.get_last
-        print("Attn/ff")
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth * 2, 2)
                                                   for c in [ff.momentum((1 - ctx.model.momentumnet_beta) /
@@ -255,9 +252,7 @@ class LinearAttention(torch.nn.Module):
                                                                           i + 1),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
                                                 target_device=ctx.model.device)
-        print("Stem")
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
-        print("Out")
         torch.nn.init.zeros_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
