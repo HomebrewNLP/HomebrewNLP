@@ -18,6 +18,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class Model(DataClass):
+    attention: str = "OmnidirectionalAttention"
     weight_sharing: bool = False
     checkpoint_path: str = "checkpoint.torch"
     steps_per_checkpoint: int = 0  # 0 -> disabled

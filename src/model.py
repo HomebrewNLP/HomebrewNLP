@@ -232,7 +232,12 @@ class LinearAttention(torch.nn.Module):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
         ff = FeedForward(self, ctx, 1, 1)
-        attn = FFTAttention(self, ctx, 1)
+
+        modules = [mod.__name__ for mod in attention_modules]
+        if ctx.model.attention not in modules:
+            raise ValueError(f"{ctx.model.attention} is not a known type of attention. You can pick any of the"
+                             f" following: {modules}")
+        attn = attention_modules[modules.index(ctx.model.attention)](self, ctx, 1)
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth * 2, 2)
                                                   for c in [ff.momentum((1 - ctx.model.momentumnet_beta) /
@@ -384,3 +389,5 @@ class OmnidirectionalAttention(FFTAttention):
 
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
         return super().forward(inp)
+
+attention_modules = [FeedForward, FFTAttention, SumAttention, OmnidirectionalAttention]
