@@ -1,10 +1,12 @@
 model:
   attention: SqueezeExcitation
-  omnidirectional: yes
-  depth: 8
+  sequence_length: 2048
+  omnidirectional: no
+  depth: 16
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 1
+  offloading: yes
   features: 1024
   feed_forward_intermediate_factor: 0.125
 optimizer:

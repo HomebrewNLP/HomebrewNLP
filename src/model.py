@@ -246,7 +246,7 @@ class LinearAttention(torch.nn.Module):
             raise ValueError(f"{ctx.model.attention} is not a known type of attention. You can pick any of the"
                              f" following: {modules}")
         attn = attention_modules[modules.index(ctx.model.attention)](self, ctx, 1)
-        self.expand_sequence = attn.get_last | ff.get_last
+        self.expand_sequence = (not attn.get_last) | (not ff.get_last)
         self.stem = revlib.ReversibleSequential(*[c
                                                   for i in range(1, 1 + ctx.model.depth * 2, 2)
                                                   for c in [ff.momentum((1 - ctx.model.momentumnet_beta) /
@@ -425,7 +425,7 @@ class SqueezeExcitation(AttentionBase):
         out = out.mm(self.weight0).chunk(3, 1)
         out = TripleNorm.apply(*out, self.ctx.model.norm_power)
         out = out.mm(self.weight1)
-        return out.unsqueeze(2)
+        return out.unsqueeze(2) * inp
 
 
 attention_modules = [FeedForward, FFTAttention, SumAttention, SqueezeExcitation]
