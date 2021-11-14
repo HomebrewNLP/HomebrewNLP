@@ -1,9 +1,10 @@
 model:
-  depth: 16
+  attention: OmnidirectionalAttention
+  depth: 8
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 1
-  features: 1024
+  features: 2048
   feed_forward_intermediate_factor: 0.125
 optimizer:
   beta2: 0.95

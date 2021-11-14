@@ -263,7 +263,6 @@ class LinearAttention(torch.nn.Module):
             out = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)), device=inp.device,
                                               dtype=inp.dtype)], 2)
         out = self.stem(out)
-
         if self.expand_sequence:
             batch, features, sequence = inp.size()
             inp = out.view(batch, features, -1, sequence).mean(2)
