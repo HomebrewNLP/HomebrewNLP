@@ -176,7 +176,7 @@ class Trainer(torch.nn.Module):
         loss = F.cross_entropy(out, tgt)
         loss.backward()
         with torch.inference_mode():
-            return loss.detach(), (out == tgt).sum().float() / tgt.numel()
+            return loss.detach(), (torch.argmax(out, 1) == tgt).sum().float() / tgt.numel()
 
     @torch.no_grad()
     def _clip_gradient(self):
