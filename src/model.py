@@ -152,20 +152,19 @@ class Trainer(torch.nn.Module):
         self.model = torch.jit.trace(model, data) if data else model
         self.optimizer = build_optimizer(ctx, self.model.parameters())
         self.scheduler = OneCycleLR(self.optimizer,
-                                    ctx.optimizer.one_cycle.cycle_min_lr,
-                                    ctx.optimizer.one_cycle.cycle_max_lr,
-                                    ctx.optimizer.one_cycle.decay_lr_rate,
-                                    ctx.optimizer.one_cycle.cycle_first_step_size,
-                                    ctx.optimizer.one_cycle.cycle_second_step_size,
-                                    ctx.optimizer.one_cycle.cycle_first_stair_count,
-                                    ctx.optimizer.one_cycle.cycle_second_stair_count,
-                                    ctx.optimizer.one_cycle.decay_step_size,
+                                    ctx.optimizer.one_cycle.max_lr,
+                                    ctx.optimizer.one_cycle.total_steps,
+                                    ctx.optimizer.one_cycle.epochs,
+                                    ctx.optimizer.one_cycle.steps_per_epoch,
+                                    ctx.optimizer.one_cycle.pct_start,
+                                    ctx.optimizer.one_cycle.anneal_strategy,
                                     ctx.optimizer.one_cycle.cycle_momentum,
-                                    ctx.optimizer.one_cycle.cycle_min_mom,
-                                    ctx.optimizer.one_cycle.cycle_max_mom,
-                                    ctx.optimizer.one_cycle.decay_mom_rate,
-                                    ctx.optimizer.one_cycle.last_batch_iteration)
-
+                                    ctx.optimizer.one_cycle.base_momentum,
+                                    ctx.optimizer.one_cycle.max_momentum,
+                                    ctx.optimizer.one_cycle.div_factor,
+                                    ctx.optimizer.one_cycle.final_div_factor,
+                                    ctx.optimizer.one_cycle.three_phase,
+                                    ctx.optimizer.one_cycle.last_epoch)
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
@@ -252,7 +251,7 @@ class LinearAttention(torch.nn.Module):
                                                                           i + 1),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
                                                 target_device=ctx.model.device,
-                                                memory_mode=revlib.MemoryModes.autograd_graph)
+                                                memory_mode=revlib.MemoryModes.autograd_function)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 

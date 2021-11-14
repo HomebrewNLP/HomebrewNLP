@@ -1,5 +1,5 @@
 model:
-  depth: 4
+  depth: 16
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 8
