@@ -7,14 +7,11 @@ model:
   weight_shared_blocks: 1
   batch_size: 1
   offloading: yes
-  features: 1024
+  features: 2048
   feed_forward_intermediate_factor: 0.125
 optimizer:
   beta2: 0.95
   gradient_accumulation_steps: 1
-  one_cycle:
-    total_steps: 1024000
-    max_lr: 0.01
 log:
   loss_steps_per_print: 4
 dataset:

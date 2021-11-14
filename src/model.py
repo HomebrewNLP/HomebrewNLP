@@ -169,13 +169,16 @@ class Trainer(torch.nn.Module):
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
 
-    def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-        out = self.model(self._to_device_detach(src))
-        tgt = self._to_device_detach(tgt)
-        loss = F.cross_entropy(out, tgt)
+    def _forward_backward(self, src: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+        src = self._to_device_detach(src)
+        msk = torch.rand(src.size(), dtype=torch.float32, device=src.device) > self.ctx.dataset.dropout
+        out = self.model(src * msk)
+        msk = 1 - msk
+        masked = msk.sum()
+        loss = (F.cross_entropy(out, src, reduction="none") * msk).sum() / masked
         loss.backward()
         with torch.inference_mode():
-            return loss.detach(), (torch.argmax(out, 1) == tgt).sum().float() / tgt.numel()
+            return loss.detach(), (torch.argmax(out, 1) == src).mul(msk).sum().float() / masked
 
     @torch.no_grad()
     def _clip_gradient(self):
@@ -185,12 +188,11 @@ class Trainer(torch.nn.Module):
             grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
             p.grad.data.copy_(p.grad * grad_scale)
 
-    def accumulated_step(self, data: typing.Tuple[torch.Tensor, torch.Tensor]
-                         ) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    def accumulated_step(self, data: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
         loss = 0
         accuracy = 0
-        for src, tgt in zip(*data):
-            lss, acc = self._forward_backward(src, tgt)
+        for src in data:
+            lss, acc = self._forward_backward(src)
             loss += lss
             accuracy += acc
         self._clip_gradient()

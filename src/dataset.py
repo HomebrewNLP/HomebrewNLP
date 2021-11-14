@@ -9,12 +9,8 @@ from src.dataclass import Context
 
 
 @torch.jit.script
-def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int,
-               drop_probability: float) -> typing.Tuple[torch.Tensor, torch.Tensor]:
-    dat = data[batch_index + idx]
-    dat = dat.to(dtype=torch.long, non_blocking=True)
-    inp = dat * (torch.rand(dat.size(), device=dat.device) > drop_probability)
-    return inp, dat
+def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> torch.Tensor:
+    return data[batch_index + idx].to(dtype=torch.long, non_blocking=True)
 
 
 class Dataset:
@@ -31,7 +27,7 @@ class Dataset:
 
     def __next__(self):
         items = [self.queue.get() for _ in range(self.ctx.optimizer.gradient_accumulation_steps)]
-        return torch.stack([itm[0] for itm in items], 0), torch.stack([itm[1] for itm in items], 0)
+        return torch.stack([itm for itm in items], 0)
 
 
 def _process_fn(ctx: Context, queue: multiprocessing.Queue, idx: int, worker_count: int):
@@ -45,7 +41,7 @@ def _process_fn(ctx: Context, queue: multiprocessing.Queue, idx: int, worker_cou
 
     random.seed(idx)
     while True:
-        queue.put(get_sample(data, batch_index, random.randint(0, length), ctx.dataset.dropout))
+        queue.put(get_sample(data, batch_index, random.randint(0, length)))
 
 
 def get_dataset(ctx: Context) -> Dataset:
