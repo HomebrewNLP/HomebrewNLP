@@ -170,10 +170,13 @@ class Trainer(torch.nn.Module):
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
 
-    def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> torch.Tensor:
-        loss = F.cross_entropy(self.model(self._to_device_detach(src)), self._to_device_detach(tgt))
+    def _forward_backward(self, src: torch.Tensor, tgt: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+        out = self.model(self._to_device_detach(src))
+        tgt = self._to_device_detach(tgt)
+        loss = F.cross_entropy(out, tgt)
         loss.backward()
-        return loss.detach()
+        with torch.inference_mode():
+            return loss.detach(), (out == tgt).sum() / tgt.size()
 
     @torch.no_grad()
     def _clip_gradient(self):
@@ -183,10 +186,15 @@ class Trainer(torch.nn.Module):
             grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
             p.grad.data.copy_(p.grad * grad_scale)
 
-    def accumulated_step(self, data: torch.Tensor) -> torch.Tensor:
-        loss = sum(self._forward_backward(s, t) for s, t in zip(*data))
+    def accumulated_step(self, data: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+        loss = 0
+        accuracy = 0
+        for src, tgt in zip(*data):
+            lss, acc = self._forward_backward(src, tgt)
+            loss += lss
+            accuracy += acc
         self._clip_gradient()
-        return loss
+        return loss / data.size(0), accuracy / data.size(0)
 
     @torch.no_grad()
     def zero_grad(self):

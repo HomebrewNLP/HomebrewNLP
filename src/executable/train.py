@@ -20,12 +20,16 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
     log = WandbLog(ctx, data_len)
     mean_loss = torch.zeros([], device=ctx.model.device, dtype=torch.float16 if ctx.model.float16 else torch.float)
     mean_max_loss = mean_loss.clone()
+    mean_acc = mean_loss.clone()
+    mean_max_acc = mean_loss.clone()
 
     i = 0
     while True:
         i += 1
 
-        mean_loss += mod.accumulated_step(next(data))
+        lss, acc = mod.accumulated_step(next(data))
+        mean_loss += lss
+        mean_acc += acc
         if ctx.optimizer.sharpness_aware_minimization.enabled:
             with torch.no_grad():
                 for p in mod.gradients():
@@ -35,7 +39,10 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                     p.add_(p.grad)
                     p.prev_step = p.grad
                     p.grad = None
-            mean_max_loss += mod.accumulated_step(next(data))
+
+            lss, acc = mod.accumulated_step(next(data))
+            mean_max_loss += lss
+            mean_max_acc += acc
         mod.optimizer.step()
         if ctx.optimizer.sharpness_aware_minimization.enabled:
             with torch.no_grad():
@@ -50,7 +57,7 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
             p['betas'] = p['betas'][0], mod.ctx.optimizer.beta2
         with torch.no_grad():
             if mod.ctx.log.loss_steps_per_print and i % mod.ctx.log.loss_steps_per_print == 0:
-                log(mean_loss, mean_max_loss,
+                log(mean_loss, mean_max_loss, mean_acc, mean_max_acc,
                     mod.optimizer.param_groups[0]['lr'], mod.optimizer.param_groups[0]['betas'])
                 mean_loss.zero_()
                 mean_max_loss.zero_()
