@@ -176,7 +176,7 @@ class Trainer(torch.nn.Module):
         loss = F.cross_entropy(out, tgt)
         loss.backward()
         with torch.inference_mode():
-            return loss.detach(), (out == tgt).sum() / tgt.size()
+            return loss.detach(), (out == tgt).sum().float() / tgt.numel()
 
     @torch.no_grad()
     def _clip_gradient(self):
@@ -186,7 +186,8 @@ class Trainer(torch.nn.Module):
             grad_scale = (p_norm / g_norm * self.ctx.optimizer.agc.gradient_clipping).clamp(max=1)
             p.grad.data.copy_(p.grad * grad_scale)
 
-    def accumulated_step(self, data: torch.Tensor) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    def accumulated_step(self, data: typing.Tuple[torch.Tensor, torch.Tensor]
+                         ) -> typing.Tuple[torch.Tensor, torch.Tensor]:
         loss = 0
         accuracy = 0
         for src, tgt in zip(*data):
@@ -194,7 +195,7 @@ class Trainer(torch.nn.Module):
             loss += lss
             accuracy += acc
         self._clip_gradient()
-        return loss / data.size(0), accuracy / data.size(0)
+        return loss / data[0].size(0), accuracy / data[0].size(0)
 
     @torch.no_grad()
     def zero_grad(self):

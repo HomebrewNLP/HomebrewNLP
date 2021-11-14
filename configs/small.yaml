@@ -10,9 +10,9 @@ optimizer:
   beta2: 0.95
   gradient_accumulation_steps: 1
   one_cycle:
-    total_steps: 8192
+    total_steps: 1024
     max_lr: 0.01
 log:
-  loss_steps_per_print: 8
+  loss_steps_per_print: 4
 dataset:
-  num_workers: 12
+  num_workers: 16
