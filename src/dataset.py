@@ -9,10 +9,12 @@ from src.dataclass import Context
 
 
 @torch.jit.script
-def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int,
+               drop_probability:float) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     dat = data[batch_index + idx]
     dat = dat.to(dtype=torch.long, non_blocking=True)
-    return dat[:, :-1], dat[:, 1:]
+    inp = dat * torch.rand_like(dat) > drop_probability
+    return inp, dat
 
 
 class Dataset:
@@ -37,13 +39,13 @@ def _process_fn(ctx: Context, queue: multiprocessing.Queue, idx: int, worker_cou
     data_len = data.size(0) // worker_count
     data = data[data_len * idx:data_len * (idx + 1)]
     batch_index = torch.arange(0, ctx.model.batch_size).view(-1, 1)
-    item_index = torch.arange(0, ctx.model.sequence_length + 1).view(1, -1)
+    item_index = torch.arange(0, ctx.model.sequence_length).view(1, -1)
     batch_index = batch_index + item_index
     length = data.size(0) - ctx.model.batch_size * ctx.model.sequence_length
 
     random.seed(idx)
     while True:
-        queue.put(get_sample(data, batch_index, random.randint(0, length)))
+        queue.put(get_sample(data, batch_index, random.randint(0, length), ctx.dataset.dropout))
 
 
 def get_dataset(ctx: Context) -> Dataset:
