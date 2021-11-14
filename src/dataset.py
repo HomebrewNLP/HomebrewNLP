@@ -10,10 +10,10 @@ from src.dataclass import Context
 
 @torch.jit.script
 def get_sample(data: torch.Tensor, batch_index: torch.Tensor, idx: int,
-               drop_probability:float) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+               drop_probability: float) -> typing.Tuple[torch.Tensor, torch.Tensor]:
     dat = data[batch_index + idx]
     dat = dat.to(dtype=torch.long, non_blocking=True)
-    inp = dat * torch.rand_like(dat) > drop_probability
+    inp = dat * torch.rand(dat.size(), device=dat.device) > drop_probability
     return inp, dat
 
 
