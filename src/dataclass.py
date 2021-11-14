@@ -124,7 +124,7 @@ class Optimizer(DataClass):
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
     eps: float = 1e-8
-    weight_decay: float = 0.01
+    weight_decay: float = 0.
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
