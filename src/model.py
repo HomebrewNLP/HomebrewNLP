@@ -165,6 +165,7 @@ class Trainer(torch.nn.Module):
                                     ctx.optimizer.one_cycle.final_div_factor,
                                     ctx.optimizer.one_cycle.three_phase,
                                     ctx.optimizer.one_cycle.last_epoch)
+
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
         return inp.to(device=self.ctx.model.device, non_blocking=True).detach()
@@ -261,12 +262,12 @@ class LinearAttention(torch.nn.Module):
             batch, features, sequence = inp.size()
             out = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)), device=inp.device,
                                               dtype=inp.dtype)], 2)
-        out = self.output(self.stem(out))
+        out = self.stem(out)
 
         if self.expand_sequence:
             batch, features, sequence = inp.size()
-            inp = out.view(batch, features // 2, -1, sequence).mean(2)
-        return inp
+            inp = out.view(batch, features, -1, sequence).mean(2)
+        return self.output(inp)
 
     def reset_cache(self):
         for mod in self.stem.modules():
