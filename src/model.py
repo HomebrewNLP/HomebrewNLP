@@ -173,7 +173,7 @@ class Trainer(torch.nn.Module):
         src = self._to_device_detach(src)
         msk = torch.rand(src.size(), dtype=torch.float32, device=src.device) > self.ctx.dataset.dropout
         out = self.model(src * msk)
-        msk = 1 - msk
+        msk = ~msk
         masked = msk.sum()
         loss = (F.cross_entropy(out, src, reduction="none") * msk).sum() / masked
         loss.backward()
@@ -338,6 +338,10 @@ class FeedForward(torch.nn.Module):
         self.idx: int = 0
         self.depth: int = 0
         self.get_last: bool = True
+
+    def __repr__(self):
+        extra = '\n  '.join([f'{name}: {param.size()}' for name, param in self.named_parameters()])
+        return f"{self._get_name()}(\n  {extra}\n)"
 
     def _cut_off(self, inp: torch.Tensor) -> torch.Tensor:
         if inp.size(2) == self.ctx.model.sequence_length:

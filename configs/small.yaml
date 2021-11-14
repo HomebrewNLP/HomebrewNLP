@@ -5,7 +5,7 @@ model:
   depth: 16
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 1
+  batch_size: 16
   offloading: yes
   features: 2048
   feed_forward_intermediate_factor: 0.125
