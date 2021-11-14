@@ -353,10 +353,13 @@ class FeedForward(torch.nn.Module):
 
         batch, features, sequence = inp.size()
         if self.get_last:
-            return torch.cat([torch.zeros((batch, features, self.ctx.model.sequence_length * self.depth)), out.size(),
+            return torch.cat([torch.zeros((batch, features, self.ctx.model.sequence_length * self.depth),
+                                          device=out.device, dtype=out.dtype), out,
                               torch.zeros((batch, features,
-                                           sequence - self.ctx.model.sequence_length * (self.depth + 1)))], 2)
-        return torch.cat([out.size(), torch.zeros((batch, features, sequence - out.size()))], 2)
+                                           sequence - self.ctx.model.sequence_length * (self.depth + 1)),
+                                          device=out.device, dtype=out.dtype)], 2)
+        return torch.cat([out, torch.zeros((batch, features, sequence - out.size(2)), device=out.device,
+                                           dtype=out.dtype)], 2)
 
     def _ff(self, inp: torch.Tensor) -> torch.Tensor:
         return linear_attention(inp, self.w0, self.groups0, self.experts0, self.w1, self.w2, self.groups2,

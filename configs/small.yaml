@@ -1,5 +1,5 @@
 model:
-  attention: FFTAttention
+  attention: SqueezeExcitation
   omnidirectional: yes
   depth: 8
   conv_kernel_size: 11
