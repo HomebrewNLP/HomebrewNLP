@@ -19,6 +19,7 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class Model(DataClass):
+    omnidirectional: bool = False
     attention: str = "FFTAttention"
     weight_sharing: bool = False
     checkpoint_path: str = "checkpoint.torch"
@@ -117,6 +118,8 @@ class SharpnessAwareMinimization(DataClass):
 
 class Optimizer(DataClass):
     type: str = "AdamW"
+    final_step: int = 2 ** 14
+    warmup_end: int = 2 ** 10
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle

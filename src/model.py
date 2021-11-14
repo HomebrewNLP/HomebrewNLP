@@ -7,7 +7,7 @@ import torch
 import torch.nn.functional
 import torch.utils.data
 from torch.nn import functional as F
-from torch.optim.lr_scheduler import OneCycleLR
+from torch.optim.lr_scheduler import LambdaLR
 
 from src.dataclass import Context
 from src.optimizers.build import build_optimizer
@@ -145,26 +145,25 @@ def conv_weight(in_features: int, out_features: int, kernel_size: int, groups: i
     return orthonormal(torch.nn.Conv1d(in_features, out_features, (kernel_size,), groups=groups).weight, 1 / std)
 
 
+def get_lr_scheduler_fn(ctx: Context) -> typing.Callable[[int], float]:
+    def _fn(step: int) -> float:
+        final_lr = 1 - 2 / (ctx.optimizer.final_step - ctx.optimizer.warmup_end)
+        lr = step
+        lr /= max(step, ctx.optimizer.warmup_end)
+        lr *= final_lr ** max(step - ctx.optimizer.warmup_end, 0)
+        # lr *= ctx.optimizer.learning_rate  # It's a multiplier for the initial learning rate, not the LR itself
+        return lr
+
+    return _fn
+
+
 class Trainer(torch.nn.Module):
     def __init__(self, ctx: Context, model: torch.nn.Module, data: typing.Optional[torch.Tensor]):
         super(Trainer, self).__init__()
         self.ctx = ctx
         self.model = torch.jit.trace(model, data) if data else model
         self.optimizer = build_optimizer(ctx, self.model.parameters())
-        self.scheduler = OneCycleLR(self.optimizer,
-                                    ctx.optimizer.one_cycle.max_lr,
-                                    ctx.optimizer.one_cycle.total_steps,
-                                    ctx.optimizer.one_cycle.epochs,
-                                    ctx.optimizer.one_cycle.steps_per_epoch,
-                                    ctx.optimizer.one_cycle.pct_start,
-                                    ctx.optimizer.one_cycle.anneal_strategy,
-                                    ctx.optimizer.one_cycle.cycle_momentum,
-                                    ctx.optimizer.one_cycle.base_momentum,
-                                    ctx.optimizer.one_cycle.max_momentum,
-                                    ctx.optimizer.one_cycle.div_factor,
-                                    ctx.optimizer.one_cycle.final_div_factor,
-                                    ctx.optimizer.one_cycle.three_phase,
-                                    ctx.optimizer.one_cycle.last_epoch)
+        self.scheduler = LambdaLR(self.optimizer, get_lr_scheduler_fn(ctx))
 
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
@@ -326,13 +325,14 @@ class FeedForward(torch.nn.Module):
         self.jitter_epsilon = ctx.model.moe_jitter_epsilon
         self.expert_chunks = ctx.model.expert_chunks
         intermediate = int(ctx.model.features * ctx.model.feed_forward_intermediate_factor)
-        self.w0 = torch.nn.ParameterList(get_moe_param(ctx.model.features * feature_factor, intermediate * 3,
-                                                       self.groups0, self.experts0, self.expert_chunks,
-                                                       ctx.model.activation_std))
-        self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size, ctx.model.bottleneck_group,
-                              ctx.model.activation_std)
-        self.w2 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features * feature_factor, self.groups2,
-                                                       self.experts2, self.expert_chunks, 1))
+        if feature_factor:
+            self.w0 = torch.nn.ParameterList(get_moe_param(ctx.model.features * feature_factor, intermediate * 3,
+                                                           self.groups0, self.experts0, self.expert_chunks,
+                                                           ctx.model.activation_std))
+            self.w1 = conv_weight(intermediate, intermediate * 3, ctx.model.conv_kernel_size,
+                                  ctx.model.bottleneck_group, ctx.model.activation_std)
+            self.w2 = torch.nn.ParameterList(get_moe_param(intermediate, ctx.model.features * feature_factor,
+                                                           self.groups2, self.experts2, self.expert_chunks, 1))
         self.idx: int = 0
         self.depth: int = 0
         self.get_last: bool = True
@@ -363,8 +363,11 @@ class FeedForward(torch.nn.Module):
                                 self.experts2,
                                 self.bottleneck_group, self.training, self.norm_power, self.jitter_epsilon)
 
+    def _inner_forward(self, inp: torch.Tensor) -> torch.Tensor:
+        return self._ff(inp)
+
     def forward(self, inp: torch.Tensor) -> torch.Tensor:
-        return self._pad(inp, self._ff(self._cut_off(inp))) * self.init_scale
+        return self._pad(inp, self._inner_forward(self._cut_off(inp))) * self.init_scale
 
     def momentum(self, init_scale: float, deep: bool, depth: int):
         out = copy.deepcopy(self) if deep else copy.copy(self)
@@ -373,27 +376,33 @@ class FeedForward(torch.nn.Module):
         return out
 
 
-class FFTAttention(FeedForward):
+class AttentionBase(FeedForward):
+    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float, feature_factor: float):
+        super(AttentionBase, self).__init__(base, ctx, init_scale, feature_factor)
+        self.get_last = not ctx.model.omnidirectional
+
+
+class FFTAttention(AttentionBase):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(FFTAttention, self).__init__(base, ctx, init_scale, 2)
 
-    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+    def _inner_forward(self, inp: torch.Tensor) -> torch.Tensor:
         batch, features, sequence = inp.size()
-        out = torch.view_as_real(torch.fft.rfft(inp, 2 * sequence))
+        out = torch.view_as_real(torch.fft.rfft(inp, 2 * sequence, norm="ortho"))
         out = out.transpose(2, 3).reshape(batch, features * 2, sequence + 1)
         out = self._ff(out)
         out = out.view(batch, features, 2, sequence + 1).transpose(2, 3).contiguous()
         out = torch.view_as_complex(out)
-        return torch.fft.irfft(out, 2 * sequence)[:, :, :sequence]
+        return torch.fft.irfft(out, 2 * sequence, norm="ortho")[:, :, :sequence]
 
 
-class SumAttention(FeedForward):
+class SumAttention(AttentionBase):
     def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
         super(SumAttention, self).__init__(base, ctx, init_scale, ctx.model.sum_attention_level)
         self.sum_attention_level = ctx.model.sum_attention_level
         self.weight = conv_weight(ctx.model.features, ctx.model.features, 3, 1, 1)
 
-    def forward(self, inp: torch.Tensor) -> torch.Tensor:
+    def _inner_forward(self, inp: torch.Tensor) -> torch.Tensor:
         out = self._ff(inp).chunk(self.sum_attention_level, 1)
         batch, features, seq = out[0].size()
         return sum(conv(torch.relu(out[0] + sum(out[inner + 1][outer // batch ** inner % batch]
@@ -402,10 +411,18 @@ class SumAttention(FeedForward):
                    for outer in range(batch ** (self.sum_attention_level - 1)))
 
 
-class OmnidirectionalAttention(FFTAttention):
-    def __init__(self, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.get_last = False
+class SqueezeExcitation(AttentionBase):
+    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
+        super(SqueezeExcitation, self).__init__(base, ctx, init_scale, 0)
+        self.weight0 = orthonormal([ctx.model.features * 2, ctx.model.features * 2 * 3], 1)
+        self.weight1 = orthonormal([ctx.model.features * 2, ctx.model.features], 1)
+
+    def _inner_forward(self, inp: torch.Tensor) -> torch.Tensor:
+        out = torch.cat([inp.mean(2), inp.max(2).values], 1)
+        out = out.mm(self.weight0).chunk(3, 1)
+        out = TripleNorm.apply(*out, self.ctx.model.norm_power)
+        out = out.mm(self.weight1)
+        return out.unsqueeze(2)
 
 
-attention_modules = [FeedForward, FFTAttention, SumAttention, OmnidirectionalAttention]
+attention_modules = [FeedForward, FFTAttention, SumAttention, SqueezeExcitation]
