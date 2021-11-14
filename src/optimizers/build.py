@@ -1,14 +1,13 @@
 import inspect
 import typing
 
-import deepspeed.ops.adam
 import torch
 
 from src.dataclass import Context
 from src.optimizers import shampoo
 
 OWN_OPTIMIZER = {'Shampoo': shampoo.Shampoo}
-LIB_OPTIMIZER = {'DeepSpeedCPUAdam': deepspeed.ops.adam.DeepSpeedCPUAdam}
+LIB_OPTIMIZER = {}
 
 
 def build_optimizer(ctx: Context, parameters: typing.Iterable[torch.nn.Parameter]):

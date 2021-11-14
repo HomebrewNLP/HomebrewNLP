@@ -6,8 +6,8 @@ import revlib
 import torch
 import torch.nn.functional
 import torch.utils.data
-from deepspeed.runtime import lr_schedules
 from torch.nn import functional as F
+from torch.optim.lr_scheduler import OneCycleLR
 
 from src.dataclass import Context
 from src.optimizers.build import build_optimizer
@@ -151,20 +151,20 @@ class Trainer(torch.nn.Module):
         self.ctx = ctx
         self.model = torch.jit.trace(model, data) if data else model
         self.optimizer = build_optimizer(ctx, self.model.parameters())
-        self.scheduler = lr_schedules.OneCycle(self.optimizer,
-                                               ctx.optimizer.one_cycle.cycle_min_lr,
-                                               ctx.optimizer.one_cycle.cycle_max_lr,
-                                               ctx.optimizer.one_cycle.decay_lr_rate,
-                                               ctx.optimizer.one_cycle.cycle_first_step_size,
-                                               ctx.optimizer.one_cycle.cycle_second_step_size,
-                                               ctx.optimizer.one_cycle.cycle_first_stair_count,
-                                               ctx.optimizer.one_cycle.cycle_second_stair_count,
-                                               ctx.optimizer.one_cycle.decay_step_size,
-                                               ctx.optimizer.one_cycle.cycle_momentum,
-                                               ctx.optimizer.one_cycle.cycle_min_mom,
-                                               ctx.optimizer.one_cycle.cycle_max_mom,
-                                               ctx.optimizer.one_cycle.decay_mom_rate,
-                                               ctx.optimizer.one_cycle.last_batch_iteration)
+        self.scheduler = OneCycleLR(self.optimizer,
+                                    ctx.optimizer.one_cycle.cycle_min_lr,
+                                    ctx.optimizer.one_cycle.cycle_max_lr,
+                                    ctx.optimizer.one_cycle.decay_lr_rate,
+                                    ctx.optimizer.one_cycle.cycle_first_step_size,
+                                    ctx.optimizer.one_cycle.cycle_second_step_size,
+                                    ctx.optimizer.one_cycle.cycle_first_stair_count,
+                                    ctx.optimizer.one_cycle.cycle_second_stair_count,
+                                    ctx.optimizer.one_cycle.decay_step_size,
+                                    ctx.optimizer.one_cycle.cycle_momentum,
+                                    ctx.optimizer.one_cycle.cycle_min_mom,
+                                    ctx.optimizer.one_cycle.cycle_max_mom,
+                                    ctx.optimizer.one_cycle.decay_mom_rate,
+                                    ctx.optimizer.one_cycle.last_batch_iteration)
 
     @torch.no_grad()
     def _to_device_detach(self, inp: torch.Tensor) -> torch.Tensor:
@@ -251,7 +251,8 @@ class LinearAttention(torch.nn.Module):
                                                                           not ctx.model.weight_sharing,
                                                                           i + 1),
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
-                                                target_device=ctx.model.device)
+                                                target_device=ctx.model.device,
+                                                memory_mode=revlib.MemoryModes.autograd_graph)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
