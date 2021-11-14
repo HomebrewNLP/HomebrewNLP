@@ -61,6 +61,8 @@ def train_model(ctx: Context, steps=None, load_model: bool = False):
                     mod.optimizer.param_groups[0]['lr'], mod.optimizer.param_groups[0]['betas'])
                 mean_loss.zero_()
                 mean_max_loss.zero_()
+                mean_acc.zero_()
+                mean_max_acc.zero_()
             if mod.ctx.model.steps_per_checkpoint and i % mod.ctx.model.steps_per_checkpoint == 0:
                 mod.save()
         if steps and i > steps:

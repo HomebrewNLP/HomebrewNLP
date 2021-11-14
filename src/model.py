@@ -195,7 +195,7 @@ class Trainer(torch.nn.Module):
             loss += lss
             accuracy += acc
         self._clip_gradient()
-        return loss / data[0].size(0), accuracy / data[0].size(0)
+        return loss, accuracy
 
     @torch.no_grad()
     def zero_grad(self):
