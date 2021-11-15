@@ -263,20 +263,19 @@ class LinearAttention(torch.nn.Module):
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
                                                 target_device=ctx.model.device,
                                                 memory_mode=revlib.MemoryModes.autograd_function)
-        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
-        torch.nn.init.zeros_(self.output.weight.data)
+        self.output = torch.nn.Conv1d(ctx.model.features, ctx.dataset.classes, (1,)).to(ctx.model.device)
+        torch.nn.init.orthogonal_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
         out = inp = self.embedding(inp).transpose(1, 2)
+        batch, features, sequence = inp.size()
         if self.expand_sequence:
-            batch, features, sequence = inp.size()
             out = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)), device=inp.device,
                                               dtype=inp.dtype)], 2)
         out = self.stem(out)
         if self.expand_sequence:
-            batch, features, sequence = inp.size()
-            inp = out.view(batch, features, -1, sequence).mean(2)
-        return self.output(inp)
+            out = out.view(batch, features, -1, sequence).mean(2)
+        return self.output(out)
 
     def reset_cache(self):
         for mod in self.stem.modules():
