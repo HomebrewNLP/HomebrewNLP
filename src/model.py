@@ -263,7 +263,7 @@ class LinearAttention(torch.nn.Module):
                                                             MomentumNetSide(ctx.model.momentumnet_beta ** (i + 1))]],
                                                 target_device=ctx.model.device,
                                                 memory_mode=revlib.MemoryModes.autograd_function)
-        self.output = torch.nn.Conv1d(ctx.model.features, ctx.dataset.classes, (1,)).to(ctx.model.device)
+        self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.orthogonal_(self.output.weight.data)
 
     def forward(self, inp: torch.Tensor):
