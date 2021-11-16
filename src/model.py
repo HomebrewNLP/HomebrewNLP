@@ -4,7 +4,6 @@ import typing
 import numpy as np
 import revlib
 import torch
-import torch.nn.functional
 import torch.utils.data
 from torch.nn import functional as F
 from torch.optim.lr_scheduler import LambdaLR
