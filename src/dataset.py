@@ -22,12 +22,12 @@ class Dataset:
     def __len__(self):
         return self.length
 
-    def __iter__(self, idx: int) -> typing.Tuple[torch.Tensor, torch.Tensor]:
+    def __iter__(self) -> typing.Tuple[torch.Tensor, torch.Tensor]:
         yield next(self)
 
     def __next__(self):
         items = [self.queue.get() for _ in range(self.ctx.optimizer.gradient_accumulation_steps)]
-        return torch.stack([itm for itm in items], 0)
+        return torch.stack(items, 0)
 
 
 def _process_fn(ctx: Context, queue: multiprocessing.Queue, idx: int, worker_count: int):
