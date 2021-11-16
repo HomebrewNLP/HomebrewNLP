@@ -1,8 +1,8 @@
 model:
-  attention: FFTAttention
+  attention: SelfAttention
   sequence_length: 2048
   omnidirectional: no
-  depth: 16
+  depth: 1
   conv_kernel_size: 11
   weight_shared_blocks: 1
   batch_size: 8

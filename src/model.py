@@ -271,6 +271,7 @@ class LinearAttention(torch.nn.Module):
         if self.expand_sequence:
             out = torch.cat([inp, torch.zeros((batch, features, sequence * len(self.stem.stem)), device=inp.device,
                                               dtype=inp.dtype)], 2)
+
         out = self.stem(out)
         if self.expand_sequence:
             out = out.view(batch, features, -1, sequence).mean(2)
@@ -309,7 +310,7 @@ def get_moe_param(in_features: int, out_features: int, groups: int, experts: int
 
 
 class FeedForward(torch.nn.Module):
-    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float, feature_factor: float):
+    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float, feature_factor: float = 1):
         super(FeedForward, self).__init__()
         self.ctx = ctx
         self.divisor = lambda: base.divisor
@@ -432,4 +433,15 @@ class SqueezeExcitation(AttentionBase):
         return out.unsqueeze(2) * inp
 
 
-attention_modules = [FeedForward, FFTAttention, SumAttention, SqueezeExcitation]
+class SelfAttention(AttentionBase):
+    def __init__(self, base: LinearAttention, ctx: Context, init_scale: float):
+        super(SelfAttention, self).__init__(base, ctx, init_scale, 0)
+        self.mha = torch.nn.MultiheadAttention(ctx.model.features, 4)
+        self.get_last = not ctx.model.omnidirectional
+
+    def _inner_forward(self, inp: torch.Tensor) -> torch.Tensor:
+        inp = inp.permute(2, 0, 1)
+        return self.mha(inp, inp, inp)[0].permute(1, 2, 0)
+
+
+attention_modules = [FeedForward, FFTAttention, SumAttention, SqueezeExcitation, SelfAttention]
