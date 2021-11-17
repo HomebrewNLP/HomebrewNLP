@@ -1,17 +1,18 @@
 model:
-  depth: 32
+  attention: SelfAttention
+  sequence_length: 2048
+  omnidirectional: no
+  depth: 1
   conv_kernel_size: 11
   weight_shared_blocks: 1
-  batch_size: 1024
+  batch_size: 8
+  offloading: yes
+  features: 2048
   feed_forward_intermediate_factor: 0.125
 optimizer:
   beta2: 0.95
   gradient_accumulation_steps: 1
-  one_cycle:
-    cycle_first_step_size: 8192
-    cycle_second_step_size: null
-    cycle_max_lr: 0.01
 log:
-  loss_steps_per_print: 8
+  loss_steps_per_print: 4
 dataset:
-  num_workers: 12
+  num_workers: 16

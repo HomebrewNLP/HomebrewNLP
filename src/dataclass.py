@@ -19,11 +19,14 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
 
 
 class Model(DataClass):
+    omnidirectional: bool = False
+    attention: str = "FFTAttention"
     weight_sharing: bool = False
     checkpoint_path: str = "checkpoint.torch"
     steps_per_checkpoint: int = 0  # 0 -> disabled
     print_on_init: bool = True
     features: int = 256
+    sum_attention_level: int = 0
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
     depth: int = 64
     batch_size: int = 128
@@ -51,6 +54,7 @@ class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
     num_workers: int = 4
+    dropout: float = 0.3
     pin_memory: bool = False
     prefetch_factor: int = 256  # 256 (Prefetch) * 8 (Long) * 2048 (GPT context) * 256 (High Batch) = 1GiB RAM
 
@@ -85,19 +89,19 @@ class Zero(DataClass):
 
 
 class OneCycle(DataClass):
-    cycle_min_lr: float = 3e-4  # Base learning rate used at the start and end of cycle.
-    cycle_max_lr: float = 1e-3  # Learning rate used in the middle of the cycle. Can be smaller than cycle_min_lr
-    decay_lr_rate: float = 1e-4  # Decay rate for learning rate.
-    cycle_first_step_size: int = 2048  # Number of training iterations in the increasing half of a cycle.
-    cycle_second_step_size: typing.Optional[int] = None  # steps in second phase. None -> cycle_first_step_size
-    cycle_first_stair_count: int = 0  # Number of stairs in first phase. 0 means staircase disabled
-    cycle_second_stair_count: typing.Optional[int] = None  # Number of stairs in second phase
-    decay_step_size: int = 2  # Every how many steps to decay lr. 0 -> no decay
-    cycle_momentum: bool = True  # Whether to cycle `momentum` inversely to learning rate.
-    cycle_min_mom: float = 0.8  # Initial momentum which is the lower boundary in the cycle for each parameter group.
-    cycle_max_mom: float = 0.9  # Upper momentum boundaries in the cycle for each parameter group.
-    decay_mom_rate: float = 0  # Decay rate for momentum
-    last_batch_iteration: int = -1  # The index of the last batch. This parameter is used when resuming a training job.
+    max_lr: float = 1e-3
+    total_steps: typing.Optional[int] = 10 ** 3
+    epochs: typing.Optional[int] = None
+    steps_per_epoch: typing.Optional[int] = None
+    pct_start: float = 0.3
+    anneal_strategy: str = 'cos'
+    cycle_momentum: bool = True
+    base_momentum: float = 0.85
+    max_momentum: float = 0.95
+    div_factor: float = 25.
+    final_div_factor: float = 1e4
+    three_phase: bool = False
+    last_epoch: int = -1
 
 
 class AdaptiveGradientClipping(DataClass):
@@ -114,11 +118,13 @@ class SharpnessAwareMinimization(DataClass):
 
 class Optimizer(DataClass):
     type: str = "AdamW"
+    final_step: int = 2 ** 14
+    warmup_end: int = 2 ** 10
     gradient_accumulation_steps: int = 1
     one_cycle: OneCycle = OneCycle()
     beta2: float = 0.95  # beta1 is controlled by one_cycle
     eps: float = 1e-8
-    weight_decay: float = 0.01
+    weight_decay: float = 0.
     zero: Zero = Zero()
     agc = AdaptiveGradientClipping()
     sharpness_aware_minimization: SharpnessAwareMinimization = SharpnessAwareMinimization()
@@ -132,7 +138,7 @@ class Optimizer(DataClass):
     statistics_compute_steps: int = 1
     block_size: int = 128
     best_effort_shape_interpretation: bool = True
-    graft_type: str = 'adagrad'  # 'Adagrad' or 'SGD'
+    graft_type: str = 'SGD'  # 'Adagrad' or 'SGD'
     nesterov: bool = True
     no_preconditioning_for_layers_with_dim_gt: int = 8192
 
