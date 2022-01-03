@@ -237,15 +237,6 @@ class Trainer(torch.nn.Module):
                     raise ValueError(f"{key} is missing in model but exists in checkpoint")
 
 
-class MomentumNetSide(torch.nn.Module):
-    def __init__(self, beta: float):
-        super(MomentumNetSide, self).__init__()
-        self.beta = beta
-
-    def forward(self, inp: torch.Tensor):
-        return inp * self.beta
-
-
 class LinearAttention(torch.nn.Module):
     def __init__(self, ctx: Context):
         super(LinearAttention, self).__init__()
@@ -256,12 +247,8 @@ class LinearAttention(torch.nn.Module):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
         cell = LinearAttentionCell(self, ctx, 1)
-        self.stem = revlib.ReversibleSequential(*[c
-                                                  for i in range(1, 1 + ctx.model.depth)
-                                                  for c in [cell.momentum((1 - ctx.model.momentumnet_beta) /
-                                                                          ctx.model.momentumnet_beta ** i, not ctx.model.weight_sharing),
-                                                            MomentumNetSide(ctx.model.momentumnet_beta ** i)]],
-                                                target_device=ctx.model.device)
+        self.stem = revlib.utils.momentum_net([copy.deepcopy(cell) for _ in range(ctx.model.depth)],
+                                              target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
 
@@ -357,9 +344,4 @@ class LinearAttentionCell(torch.nn.Module):
                                                                       self.norm_power, self.jitter_epsilon
                                                                       )
         out = out * self.init_scale
-        return out
-
-    def momentum(self, init_scale: float, deep: bool):
-        out = copy.deepcopy(self) if deep else copy.copy(self)
-        out.init_scale = init_scale
         return out
