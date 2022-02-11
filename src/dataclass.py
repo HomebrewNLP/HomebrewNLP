@@ -17,6 +17,19 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
         return serialize({key: value for key, value in attributes.items() if not isinstance(value, typing.Callable)})
     return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
+def load_torch_xla():
+    # Note: install torch_xla and set model.xla.use_xla to "True"
+    # to train TPU models.
+    # See install instructions at: https://github.com/pytorch/xla
+    #
+    # Because XLA is optional and locks/unlocks threads, we'll import it once.
+
+    global torch_xla, xm, xmp, pl
+    import torch_xla
+    import torch_xla.core.xla_model as xm
+    import torch_xla.distributed.xla_multiprocessing as xmp
+    import torch_xla.distributed.parallel_loader as pl
+
 
 class Model(DataClass):
     weight_sharing: bool = False
@@ -47,11 +60,18 @@ class Model(DataClass):
     expert_chunks: int = 1  # Increase it if not all MoE parameters fit onto the GPU
 
 
+class XLA(DataClass):
+    use_xla: bool = False
+    num_devices: int = 8
+    world_size = None
+    rank = None
+
 class Dataset(DataClass):
     file_name: str = "out.tensor"
     classes: int = 256
     num_workers: int = 4
     pin_memory: bool = False
+    shuffle: bool = False
     prefetch_factor: int = 256  # 256 (Prefetch) * 8 (Long) * 2048 (GPT context) * 256 (High Batch) = 1GiB RAM
 
 
@@ -167,3 +187,7 @@ class Context(DataClass):
 
         if config is not None:
             init_class(self, config)
+
+    def __load_torch_xla__(self):
+        load_torch_xla()
+

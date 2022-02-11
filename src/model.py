@@ -225,10 +225,23 @@ class Trainer(torch.nn.Module):
             yield p
 
     def save(self):
+        if self.ctx.model.xma.use_xla:
+            state_dict = self.state_dict()
+            state_keys = list(state_dict)
+            for name in state_keys: state_dict[name].to(torch.device('cpu'))
+            torch.save(state_dict, self.ctx.model.checkpoint_path)
+            return
         torch.save(self.state_dict(), self.ctx.model.checkpoint_path)
 
     def load(self):
-        wrong_keys = self.load_state_dict(torch.load(self.ctx.model.checkpoint_path), strict=False)
+        if self.ctx.model.xma.use_xla:
+            # map_location does not work with TPUs
+            state_dict = torch.load(self.ctx.model.checkpoint_path, map_location = torch.device('cpu'))
+            wrong_keys = list(state_dict)
+            for name in wrong_keys: state_dict[name].to(self.ctx.model.device)
+            wrong_keys = self.load_state_dict(state_dict, strict=False)
+        else:
+            wrong_keys = self.load_state_dict(torch.load(self.ctx.model.checkpoint_path), strict=False)
         for key in wrong_keys.missing_keys + wrong_keys.unexpected_keys:
             if not any(k.startswith('_') for k in key.split('.')):
                 if key in wrong_keys.missing_keys:

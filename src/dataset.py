@@ -1,5 +1,4 @@
 import typing
-
 import torch
 import torch.utils.data
 
@@ -33,6 +32,17 @@ def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
         print(f"Warning: prefetch_factor ({ctx.dataset.prefetch_factor}) < num_workers ({ctx.dataset.num_workers})."
               f"Some workers will be idle at all times. Reducing num_workers ({ctx.dataset.num_workers}) to "
               f"prefetch_factor ({ctx.dataset.prefetch_factor}).")
+    if ctx.model.xla.use_xla:
+        if not Context.xm.is_master_ordinal():
+            Context.xm.rendezvous('load_once')
+        dataset = Dataset(ctx)
+        if Context.xm.is_master_ordinal():
+            Context.xm.rendezvous('load_once')
+        return torch.utils.data.distributed.DistributedSampler(
+                dataset, num_replicas = Context.xrt_world_size(),
+                rank = Context.xm.get_ordinal(), shuffle = ctx.dataset.shuffle)
+
     return torch.utils.data.DataLoader(Dataset(ctx), ctx.optimizer.gradient_accumulation_steps, True,
                                        num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
-                                       pin_memory=ctx.dataset.pin_memory, prefetch_factor=ctx.dataset.prefetch_factor)
+                                       pin_memory=ctx.dataset.pin_memory, shuffle = ctx.dataset.shuffle,
+                                       prefetch_factor=ctx.dataset.prefetch_factor)
