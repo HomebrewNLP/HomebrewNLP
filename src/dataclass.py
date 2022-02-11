@@ -17,18 +17,12 @@ def serialize(instance: typing.Union[DataClass, typing.Dict[str, typing.Any]]):
         return serialize({key: value for key, value in attributes.items() if not isinstance(value, typing.Callable)})
     return {k: serialize(v) if isinstance(v, DataClass) else v for k, v in instance.items()}
 
-def load_torch_xla():
-    # Note: install torch_xla and set model.xla.use_xla to "True"
-    # to train TPU models.
-    # See install instructions at: https://github.com/pytorch/xla
-    #
-    # Because XLA is optional and locks/unlocks threads, we'll import it once.
 
-    global torch_xla, xm, xmp, pl
-    import torch_xla
-    import torch_xla.core.xla_model as xm
-    import torch_xla.distributed.xla_multiprocessing as xmp
-    import torch_xla.distributed.parallel_loader as pl
+class XLA(DataClass):
+    use_xla: bool = False
+    num_devices: int = 8
+    world_size = None
+    rank = None
 
 
 class Model(DataClass):
@@ -36,6 +30,7 @@ class Model(DataClass):
     checkpoint_path: str = "checkpoint.torch"
     steps_per_checkpoint: int = 0  # 0 -> disabled
     print_on_init: bool = True
+    xla: XLA = XLA()
     features: int = 256
     momentumnet_beta: float = 0.99  # The higher this is, the more numerically stable. BUT also lower impact per layer
     depth: int = 64
@@ -59,12 +54,6 @@ class Model(DataClass):
     moe_jitter_epsilon: float = 0.02
     expert_chunks: int = 1  # Increase it if not all MoE parameters fit onto the GPU
 
-
-class XLA(DataClass):
-    use_xla: bool = False
-    num_devices: int = 8
-    world_size = None
-    rank = None
 
 class Dataset(DataClass):
     file_name: str = "out.tensor"
@@ -188,6 +177,4 @@ class Context(DataClass):
         if config is not None:
             init_class(self, config)
 
-    def __load_torch_xla__(self):
-        load_torch_xla()
 

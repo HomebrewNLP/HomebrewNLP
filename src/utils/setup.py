@@ -13,7 +13,7 @@ from src.utils.formatting import pretty_print
 DataLoaderIter = torch.utils.data.dataloader._BaseDataLoaderIter
 
 
-def setup_torch(seed: int):
+def setup_torch(seed: int, cuda: bool):
     torch._C._debug_set_autodiff_subgraph_inlining(False)  # skipcq: PYL-W0212
     torch._C._set_graph_executor_optimize(True)  # skipcq: PYL-W0212
     torch._C._set_backcompat_broadcast_warn(False)  # skipcq: PYL-W0212
@@ -32,7 +32,8 @@ def setup_torch(seed: int):
     torch._C._jit_override_can_fuse_on_cpu(False)  # skipcq: PYL-W0212
     torch._C._jit_override_can_fuse_on_gpu(True)  # skipcq: PYL-W0212
     torch._C._jit_set_texpr_fuser_enabled(True)  # skipcq: PYL-W0212
-    torch._C._jit_set_nvfuser_enabled(False)  # skipcq: PYL-W0212
+    if cuda:
+        torch._C._jit_set_nvfuser_enabled(False)  # skipcq: PYL-W0212
 
     random.seed(seed)
     np.random.seed(seed)
@@ -54,7 +55,6 @@ def get_model(ctx: Context, load_model: bool, data: typing.Optional[torch.Tensor
     if not ctx.model.offloading:
         mod = mod.to(ctx.model.device)
     return mod
-
 
 def encode(prompt: str) -> torch.Tensor:
     return torch.as_tensor(np.frombuffer(prompt.encode('UTF-8'), np.uint8))

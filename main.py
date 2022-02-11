@@ -42,7 +42,7 @@ def train(config_path: typing.Optional[str] = None, steps: int = 0, load_model: 
     Trains a model given the config file.
     '''
     ctx = get_context(config_path)
-    setup_torch(0)
+    setup_torch(0, 'cuda' in ctx.model.device)
 
     dump = yaml.dump(ctx.serialize(), indent=4)
     syntax_print(dump, "yaml", title="Config")

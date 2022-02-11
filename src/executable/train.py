@@ -3,6 +3,7 @@ import wandb
 
 from src.dataclass import Context
 from src.dataset import get_dataset
+from src.utils import _xla
 from src.utils.formatting import WandbLog
 from src.utils.setup import get_model
 
@@ -12,23 +13,23 @@ def model_agent(index, ctx: Context, steps=None, load_model: bool = False):
 
     xla = ctx.model.xla.use_xla
     if xla:
-        ctx.model.device = Context.xm.xla_device()
-        data = Context.pl.ParallelLoader(data, [ctx.model.device]).per_device_loader(ctx.model.device)
+        ctx.model.device = _xla.xm.xla_device()
+        data = _xla.pl.ParallelLoader(data, [ctx.model.device]).per_device_loader(ctx.model.device)
 
     data_len = len(data)
     data = iter(data)
     mod = get_model(ctx, load_model, next(data)[0])
 
-    if xla and not Context.xm.is_master_ordinal():
+    if xla and not _xla.xm.is_master_ordinal():
         # If any keys need to be entered, make sure it's done before proceeding.
-        Context.xm.rendezvous('wandb_init')
+        _xla.xm.rendezvous('wandb_init')
 
     wandb.init(project=ctx.log.wandb.project, entity=ctx.log.wandb.entity, config=ctx.serialize())
     wandb.watch(mod, log=ctx.log.wandb.model_log_type, log_freq=ctx.log.wandb.log_frequency)
     log = WandbLog(ctx, data_len)
 
-    if xla and Context.xm.is_master_ordinal:
-        Context.xm.rendezvous('wandb_init')
+    if xla and _xla.xm.is_master_ordinal:
+        _xla.xm.rendezvous('wandb_init')
 
     mean_loss = torch.zeros([], device=ctx.model.device, dtype=torch.float16 if ctx.model.float16 else torch.float)
     mean_max_loss = mean_loss.clone()
@@ -59,7 +60,7 @@ def model_agent(index, ctx: Context, steps=None, load_model: bool = False):
             mod.zero_grad()
 
         if xla:
-            Context.xm.optimizer_step(mod.scheduler)
+            _xla.xm.optimizer_step(mod.scheduler)
         else:
             mod.scheduler.step()
 
@@ -67,7 +68,7 @@ def model_agent(index, ctx: Context, steps=None, load_model: bool = False):
             p['betas'] = p['betas'][0], mod.ctx.optimizer.beta2
         with torch.no_grad():
             if mod.ctx.log.loss_steps_per_print and i % mod.ctx.log.loss_steps_per_print == 0:
-                if not xla or Context.xm.is_master_ordinal():
+                if not xla or _xla.xm.is_master_ordinal():
                     log(mean_loss, mean_max_loss,
                         mod.optimizer.param_groups[0]['lr'], mod.optimizer.param_groups[0]['betas'])
                 mean_loss.zero_()
@@ -79,7 +80,7 @@ def model_agent(index, ctx: Context, steps=None, load_model: bool = False):
 
 def train_model(ctx: Context, steps=None, load_model: bool = False):
     if ctx.model.xla.use_xla:
-        ctx.__load_torch_xla__()
-        xmp.spawn(model_agent, args=(ctx, steps, load_model),nprocs=ctx.model.xla.num_devices, start_method='spawn')
+        _xla.load_torch_xla()
+        _xla.xmp.spawn(model_agent, args=(ctx, steps, load_model),nprocs=ctx.model.xla.num_devices, start_method='fork')
     else:
         model_agent(0, ctx, steps=steps, load_model = load_model)
