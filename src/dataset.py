@@ -39,11 +39,17 @@ def get_dataset(ctx: Context) -> torch.utils.data.DataLoader:
         dataset = Dataset(ctx)
         if _xla.xm.is_master_ordinal():
             _xla.xm.rendezvous('load_once')
-        return torch.utils.data.distributed.DistributedSampler(
-                dataset, num_replicas = _xla.xrt_world_size(),
+        sampler = torch.utils.data.distributed.DistributedSampler(
+                dataset, num_replicas = _xla.xm.xrt_world_size(),
                 rank = _xla.xm.get_ordinal(), shuffle = ctx.dataset.shuffle)
-
-    return torch.utils.data.DataLoader(Dataset(ctx), ctx.optimizer.gradient_accumulation_steps, True,
-                                       num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
-                                       pin_memory=ctx.dataset.pin_memory, shuffle = ctx.dataset.shuffle,
-                                       prefetch_factor=ctx.dataset.prefetch_factor)
+        return torch.utils.data.DataLoader(dataset,
+                                           batch_size=ctx.optimizer.gradient_accumulation_steps,
+                                           sampler=sampler,
+                                           num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
+                                           prefetch_factor=ctx.dataset.prefetch_factor
+                                           )
+    else:
+        return torch.utils.data.DataLoader(Dataset(ctx), batch_size=ctx.optimizer.gradient_accumulation_steps,
+                                           num_workers=min(ctx.dataset.num_workers, ctx.dataset.prefetch_factor),
+                                           pin_memory=ctx.dataset.pin_memory, shuffle = ctx.dataset.shuffle,
+                                           prefetch_factor=ctx.dataset.prefetch_factor)
