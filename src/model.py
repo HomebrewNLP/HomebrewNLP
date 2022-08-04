@@ -247,7 +247,7 @@ class LinearAttention(torch.nn.Module):
         self.register_buffer("divisor", pos_embd.unsqueeze(0).to(torch.float).to(ctx.model.device))
 
         cell = LinearAttentionCell(self, ctx, 1)
-        self.stem = revlib.utils.momentum_net([copy.deepcopy(cell) for _ in range(ctx.model.depth)],
+        self.stem = revlib.utils.momentum_net(*[copy.deepcopy(cell) for _ in range(ctx.model.depth)],
                                               target_device=ctx.model.device)
         self.output = torch.nn.Conv1d(ctx.model.features * 2, ctx.dataset.classes, (1,)).to(ctx.model.device)
         torch.nn.init.zeros_(self.output.weight.data)
